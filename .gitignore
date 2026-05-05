@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Environment
+.env
+.env.local
+
+# Project outputs
+output/
+*.mid
+*.wav
+*.mp3
+
+# Soundfonts (large, user-supplied)
+*.sf2
+soundfonts/
+
+# Caches
+.cache/
+*.parquet
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.cursor/
+.idea/
