@@ -33,6 +33,7 @@ from btc_sonify.midi_writer import TempoChange, write_midi
 from btc_sonify.percussion import MovementOffset, map_percussion
 from btc_sonify.scales import SCALES
 from btc_sonify.symphony import detect_movements, map_symphony
+from btc_sonify.visualize import write_visualization
 
 app = typer.Typer(
     add_completion=False,
@@ -81,6 +82,17 @@ def sonify(
         "classical",
         "--palette",
         help="Instrument palette: classical, synthwave, cinematic, electronic.",
+    ),
+    visualize: bool = typer.Option(
+        False,
+        "--visualize",
+        is_flag=True,
+        help="Also write an interactive HTML visualizer next to the .mid.",
+    ),
+    audio_file: str | None = typer.Option(
+        None,
+        "--audio-file",
+        help="Audio filename to embed in the visualizer (default: <output>.mp3).",
     ),
     render_wav: bool = typer.Option(
         False,
@@ -182,6 +194,25 @@ def sonify(
         title=title,
     )
 
+    # --- Optional HTML visualizer ------------------------------------
+    html_path: Path | None = None
+    if visualize:
+        html_path = output_path.with_suffix(".html")
+        # Default audio filename: <stem>.mp3 next to the html (the user
+        # exports this from Logic / fluidsynth and drops it in this dir).
+        audio_filename = audio_file or (output_path.stem + ".mp3")
+        viz_title = title or f"BTC Sonify {start} to {end}"
+        console.print(f"[cyan]Writing visualizer → {html_path}…[/cyan]")
+        write_visualization(
+            df=df,
+            rendered_movements=rendered_movements,
+            base_config=base_config,
+            output_path=html_path,
+            audio_path=audio_filename,
+            title=viz_title,
+            palette_name=palette,
+        )
+
     # --- Optional WAV render -----------------------------------------
     wav_path: Path | None = None
     if render_wav:
@@ -222,6 +253,8 @@ def sonify(
     table.add_row("output",        str(output_path))
     if wav_path is not None:
         table.add_row("wav",       str(wav_path))
+    if html_path is not None:
+        table.add_row("visualizer", str(html_path))
 
     console.print(Panel.fit(
         table, title="[green]btc-sonify[/green]", border_style="green",

@@ -132,7 +132,7 @@ btc_sonify/
 Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
 
 ```bash
-uv run pytest               # 209 tests, ~1s
+uv run pytest               # 224 tests, ~1.5s
 ```
 
 ## Palettes
@@ -155,6 +155,23 @@ Each palette swaps the melody / harmony / drum-kit programs and adds a sub-bass 
 The same musical content (mapping, scale, articulation, ornaments) plays through all four — they're four different lenses on the same sonification. The sub-bass doubles the close note one octave below at 70% melody velocity, sustaining underneath like a synth pad. Classical has no bass on purpose — orchestral arrangements rarely need a sub layer.
 
 You can override individual instruments in your DAW after import: drag any of Logic's stock plug-ins (Alchemy, Sculpture, Drum Machine Designer) onto the right track to push the modernization further than a GM program number can.
+
+## Visualizer
+
+Add `--visualize` to write a self-contained HTML page next to the `.mid`:
+
+```bash
+btc-sonify --start 2020-01-01 --end 2026-05-05 --mode symphony \
+  --palette synthwave --visualize \
+  --output output/btc.mid
+# → output/btc.mid + output/btc.html
+```
+
+Open the HTML in any browser. You'll see a candlestick chart of the source data with a scrubbing playhead, a clickable movement timeline, and a "now playing" panel showing the current date / price / movement / scale / BPM. Click any candle or any movement chip to seek.
+
+For audio, export your MIDI from Logic / GarageBand / fluidsynth as an `.mp3` (default expected name is `<output-stem>.mp3` — i.e. `btc.mp3` next to `btc.html`) and drop it in the same folder. The `<audio>` tag in the page will pick it up. Override with `--audio-file my-render.mp3` if your filename differs.
+
+The HTML is fully self-contained — embedded candle data + movement metadata + inline CSS/JS, no external dependencies, no build step. Upload it (and the audio file) to Cloudflare R2 or any static host and you've got a shareable URL.
 
 ## Symphony mode
 
@@ -221,6 +238,9 @@ Drums sit at 30–65% of the melody's velocity ceiling so they support rather th
 --movements     Symphony only: force exactly N movements (default: auto)
 --palette       Instrument palette: classical (default), synthwave,
                 cinematic, electronic — see above
+--visualize     Also write an interactive HTML visualizer next to the .mid
+--audio-file    Audio filename to embed in the visualizer (default:
+                <output-stem>.mp3)
 --render-wav    Also produce a WAV (requires --soundfont)
 --soundfont     Path to .sf2 soundfont
 --exchange      ccxt exchange ID (default: binanceus; binance.com is
