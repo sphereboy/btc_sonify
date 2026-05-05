@@ -136,16 +136,17 @@ def write_midi(
     tempo_changes: list[TempoChange] | None = None,
     include_percussion: bool = False,
     include_bass: bool = False,
+    include_voice: bool = False,
     title: str | None = None,
 ) -> None:
     """Write the event list to a .mid file at `path`.
 
-    Track order: meta → melody → harmony → bass (optional) → percussion
-    (optional). ``tempo_changes`` overrides the single-tempo default for
-    symphony mode. ``include_bass`` and ``include_percussion`` only
-    matter when ``events`` actually contains events on those channels —
-    if you pass them with no matching events, the resulting tracks are
-    just program changes followed by silence (harmless but ugly).
+    Track order: meta → melody → harmony → bass → voice → percussion.
+    All non-melody/non-harmony tracks are optional and only included
+    when both the corresponding ``include_*`` flag is set AND the
+    config has a program assigned (so passing ``include_voice=True``
+    on a palette without a ``voice_program`` is a no-op rather than an
+    empty-track artefact).
     """
     mid = mido.MidiFile(type=1, ticks_per_beat=config.ppq)
     mid.tracks.append(_build_meta_track(config, tempo_changes, title))
@@ -162,6 +163,11 @@ def write_midi(
         mid.tracks.append(_track_for_channel(
             events, config.bass_channel, config.bass_program,
             track_name="Bass",
+        ))
+    if include_voice and config.voice_program is not None:
+        mid.tracks.append(_track_for_channel(
+            events, config.voice_channel, config.voice_program,
+            track_name="Voice",
         ))
     if include_percussion:
         mid.tracks.append(_track_for_channel(

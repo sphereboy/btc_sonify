@@ -41,16 +41,19 @@ DRUM_KIT_TR_808 = 25
 class Palette:
     """Instrument palette for a sonification run.
 
-    Bundles the four channel programs (melody, harmony, optional bass,
+    Bundles the channel programs (melody, harmony, optional bass + voice,
     drum kit) so a single ``--palette synthwave`` flag swaps the whole
-    arrangement coherently. Bass is optional — classical doesn't need
-    it, but every modern palette does.
+    arrangement coherently. Bass and voice are optional — classical
+    doesn't need bass, but voice (a sustained 'lead' choir line floating
+    above the synth arp) is what most modern palettes are missing
+    when they feel "instrumental but no lead vocal".
     """
     name: str
     melody_program: int
     harmony_program: int
     drum_program: int = DRUM_KIT_STANDARD
     bass_program: int | None = None
+    voice_program: int | None = None
 
 
 # The four palettes. Program numbers are GM/GS standard and pick out
@@ -64,6 +67,7 @@ PALETTES: dict[str, Palette] = {
         harmony_program=48,  # String Ensemble 1
         drum_program=DRUM_KIT_STANDARD,
         bass_program=None,
+        voice_program=52,    # Choir Aahs — orchestral choir
     ),
     "synthwave": Palette(
         name="synthwave",
@@ -71,6 +75,7 @@ PALETTES: dict[str, Palette] = {
         harmony_program=89,  # Pad 2 (warm) — analog poly pad
         drum_program=DRUM_KIT_ELECTRONIC,
         bass_program=38,     # Synth Bass 1 — punchy mono bass
+        voice_program=53,    # Voice Oohs — synthy choir, 80s vibe
     ),
     "cinematic": Palette(
         name="cinematic",
@@ -78,6 +83,7 @@ PALETTES: dict[str, Palette] = {
         harmony_program=95,  # Pad 8 (sweep) — film-score sweep
         drum_program=DRUM_KIT_POWER,
         bass_program=39,     # Synth Bass 2 — fat sub
+        voice_program=91,    # Pad 4 (choir) — film score choir pad
     ),
     "electronic": Palette(
         name="electronic",
@@ -85,6 +91,7 @@ PALETTES: dict[str, Palette] = {
         harmony_program=92,  # Pad 5 (bowed)
         drum_program=DRUM_KIT_TR_808,
         bass_program=38,     # Synth Bass 1
+        voice_program=54,    # Synth Voice — chopped electronic vocal
     ),
 }
 
@@ -152,13 +159,24 @@ class RunConfig:
     melody_channel: int = 0
     harmony_channel: int = 1
     bass_channel: int = 2
+    voice_channel: int = 3
     melody_program: int = GM_ACOUSTIC_GRAND
     harmony_program: int = GM_STRING_ENSEMBLE_1
     drum_program: int = 0                # 0 = standard GM kit
     bass_program: int | None = None      # None = no bass track
+    voice_program: int | None = None     # None = no voice/lead track
     harmony_velocity_factor: float = 0.6
     bass_velocity_factor: float = 0.7
     bass_octave_shift: int = -1          # one octave below the melody close note
+
+    # Voice (the lead "vocal" line floating above the synth arp).
+    # Plays a sustained note every voice_note_length_candles candles,
+    # pitched at a smoothed close price quantized to scale and shifted
+    # voice_octave_shift octaves above the melody.
+    voice_velocity_factor: float = 0.7
+    voice_smoothing_window: int = 5      # rolling-mean window for the macro contour
+    voice_note_length_candles: int = 4   # one held note covers N candles
+    voice_octave_shift: int = 1          # +1 octave above melody (cap MIDI 96)
 
     @property
     def candle_ticks(self) -> int:
@@ -180,7 +198,7 @@ class RunConfig:
         return max(1, self.candle_ticks // 4)
 
     def with_palette(self, palette: Palette) -> RunConfig:
-        """Return a copy of this config with all four channel programs
+        """Return a copy of this config with all five channel programs
         set from the palette."""
         return replace(
             self,
@@ -188,4 +206,5 @@ class RunConfig:
             harmony_program=palette.harmony_program,
             drum_program=palette.drum_program,
             bass_program=palette.bass_program,
+            voice_program=palette.voice_program,
         )

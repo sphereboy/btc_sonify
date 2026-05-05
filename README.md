@@ -136,7 +136,7 @@ btc_sonify/
 Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
 
 ```bash
-uv run pytest               # 246 tests, ~1.5s
+uv run pytest               # 264 tests, ~1.5s
 ```
 
 ## Palettes
@@ -149,12 +149,14 @@ btc-sonify --start 2020-01-01 --end 2024-12-31 --mode symphony --palette synthwa
 
 Each palette swaps the melody / harmony / drum-kit programs and adds a sub-bass track on a fourth channel:
 
-| Palette | Melody | Harmony | Drums | Bass |
-|---|---|---|---|---|
-| `classical` *(default)* | Acoustic Grand | String Ensemble | Standard kit | — |
-| `synthwave` | Sawtooth Lead | Warm Pad | Electronic kit | Synth Bass 1 |
-| `cinematic` | Synth Brass | Sweep Pad | Power kit | Synth Bass 2 |
-| `electronic` | Rhodes Electric | Bowed Pad | TR-808 kit | Synth Bass 1 |
+| Palette | Melody | Harmony | Drums | Bass | Voice |
+|---|---|---|---|---|---|
+| `classical` *(default)* | Acoustic Grand | String Ensemble | Standard kit | — | Choir Aahs |
+| `synthwave` | Sawtooth Lead | Warm Pad | Electronic kit | Synth Bass 1 | Voice Oohs |
+| `cinematic` | Synth Brass | Sweep Pad | Power kit | Synth Bass 2 | Pad 4 (choir) |
+| `electronic` | Rhodes Electric | Bowed Pad | TR-808 kit | Synth Bass 1 | Synth Voice |
+
+**Voice track** is a sustained "lead vocal" line: it samples a smoothed close price every 4 candles, quantizes to scale, shifts up an octave, and holds the note for the full 4-candle window. Floats above the synth lead the way a vocalist would over an instrumental — same data, but tracing the macro arc instead of every candle's detail. This is the layer that turns "instrumental" into "produced track."
 
 The same musical content (mapping, scale, articulation, ornaments) plays through all four — they're four different lenses on the same sonification. The sub-bass doubles the close note one octave below at 70% melody velocity, sustaining underneath like a synth pad. Classical has no bass on purpose — orchestral arrangements rarely need a sub layer.
 

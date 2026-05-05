@@ -34,6 +34,7 @@ from btc_sonify.percussion import MovementOffset, map_percussion
 from btc_sonify.scales import SCALES
 from btc_sonify.symphony import detect_movements, map_symphony
 from btc_sonify.visualize import write_visualization
+from btc_sonify.voice import map_voice
 
 app = typer.Typer(
     add_completion=False,
@@ -157,12 +158,11 @@ def sonify(
 
     # --- Map to MIDI events ------------------------------------------
     if mode == "symphony":
-        events, tempo_changes, percussion_events, bass_events, rendered_movements = (
-            _map_symphony_pipeline(
-                console, df, base_config,
-                forced_movements=movements,
-                user_specified_scale=user_specified_scale,
-            )
+        (events, tempo_changes, percussion_events, bass_events, voice_events,
+         rendered_movements) = _map_symphony_pipeline(
+            console, df, base_config,
+            forced_movements=movements,
+            user_specified_scale=user_specified_scale,
         )
         title = f"BTC Symphony {start} to {end}"
         include_percussion = True
@@ -170,6 +170,7 @@ def sonify(
         console.print(f"[cyan]Mapping candles to MIDI events ({scale}, root {root}, {octaves} octaves, {palette} palette)…[/cyan]")
         events = map_candles_to_events(df, base_config)
         bass_events = map_bass(df, base_config)
+        voice_events = map_voice(df, base_config)
         tempo_changes = None
         percussion_events = []
         rendered_movements = None
@@ -179,9 +180,11 @@ def sonify(
     melody_count = sum(1 for e in events if e.channel == base_config.melody_channel)
     harmony_count = sum(1 for e in events if e.channel == base_config.harmony_channel)
     bass_count = len(bass_events)
+    voice_count = len(voice_events)
     drum_count = len(percussion_events)
-    all_events = events + bass_events + percussion_events
+    all_events = events + bass_events + voice_events + percussion_events
     include_bass = bass_count > 0
+    include_voice = voice_count > 0
 
     # --- Write the .mid file -----------------------------------------
     output_path = Path(output)
@@ -191,6 +194,7 @@ def sonify(
         tempo_changes=tempo_changes,
         include_percussion=include_percussion,
         include_bass=include_bass,
+        include_voice=include_voice,
         title=title,
     )
 
@@ -246,6 +250,8 @@ def sonify(
     table.add_row("harmony notes", f"{harmony_count}")
     if bass_count:
         table.add_row("bass notes", f"{bass_count}")
+    if voice_count:
+        table.add_row("voice notes", f"{voice_count}")
     if drum_count:
         table.add_row("drum hits", f"{drum_count}")
     table.add_row("pitch range",   f"MIDI {pitch_range[0]}..{pitch_range[1]}")
@@ -317,8 +323,11 @@ def _map_symphony_pipeline(
     ]
     percussion_events = map_percussion(df, base_config, movement_offsets=offsets)
     bass_events = map_bass(df, base_config, movement_offsets=offsets)
+    voice_events = map_voice(df, base_config, movement_offsets=offsets)
 
-    return events, tempo_changes, percussion_events, bass_events, rendered
+    return (
+        events, tempo_changes, percussion_events, bass_events, voice_events, rendered,
+    )
 
 
 def _fetch_with_progress(
