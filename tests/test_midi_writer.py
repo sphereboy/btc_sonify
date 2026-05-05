@@ -189,6 +189,92 @@ def test_empty_event_list_writes_valid_file(tmp_path, cfg):
 
 # --- Total duration ----------------------------------------------------
 
+# --- Multi-tempo (symphony) --------------------------------------------
+
+def test_tempo_changes_emit_multiple_set_tempo_messages(tmp_path, cfg):
+    from btc_sonify.midi_writer import TempoChange
+    events = [MidiEvent(0, 60, 80, 0, 480)]
+    out = tmp_path / "multi.mid"
+    write_midi(events, out, cfg, tempo_changes=[
+        TempoChange(tick=0, bpm=120, label="I."),
+        TempoChange(tick=4800, bpm=144, label="II."),
+        TempoChange(tick=9600, bpm=96, label="III."),
+    ])
+    mid = mido.MidiFile(out)
+    tempos = [m for m in mid.tracks[0] if m.type == "set_tempo"]
+    assert len(tempos) == 3
+    assert tempos[0].tempo == mido.bpm2tempo(120)
+    assert tempos[1].tempo == mido.bpm2tempo(144)
+    assert tempos[2].tempo == mido.bpm2tempo(96)
+
+
+def test_movement_labels_written_as_markers(tmp_path, cfg):
+    from btc_sonify.midi_writer import TempoChange
+    events = [MidiEvent(0, 60, 80, 0, 480)]
+    out = tmp_path / "labeled.mid"
+    write_midi(events, out, cfg, tempo_changes=[
+        TempoChange(tick=0, bpm=120, label="I. Bull 2020"),
+        TempoChange(tick=4800, bpm=144, label="II. Bear 2022"),
+    ])
+    mid = mido.MidiFile(out)
+    markers = [m for m in mid.tracks[0] if m.type == "marker"]
+    assert [m.text for m in markers] == ["I. Bull 2020", "II. Bear 2022"]
+
+
+# --- Percussion track --------------------------------------------------
+
+def test_include_percussion_adds_fourth_track(tmp_path, cfg):
+    events = [
+        MidiEvent(channel=0, note=60, velocity=80, start_tick=0, duration_ticks=480),
+        MidiEvent(channel=9, note=36, velocity=80, start_tick=0, duration_ticks=240),
+    ]
+    out = tmp_path / "drums.mid"
+    write_midi(events, out, cfg, include_percussion=True)
+    mid = mido.MidiFile(out)
+    assert len(mid.tracks) == 4
+
+
+def test_drum_track_has_no_program_change(tmp_path, cfg):
+    """Channel 9 is implicit drums in GM — no program change should be emitted."""
+    events = [
+        MidiEvent(channel=9, note=36, velocity=80, start_tick=0, duration_ticks=240),
+    ]
+    out = tmp_path / "drums.mid"
+    write_midi(events, out, cfg, include_percussion=True)
+    mid = mido.MidiFile(out)
+    drum_track = mid.tracks[3]
+    pcs = [m for m in drum_track if m.type == "program_change"]
+    assert pcs == []
+
+
+def test_drum_notes_appear_only_on_drum_track(tmp_path, cfg):
+    events = [
+        MidiEvent(channel=0, note=60, velocity=80, start_tick=0, duration_ticks=480),
+        MidiEvent(channel=9, note=36, velocity=80, start_tick=0, duration_ticks=240),
+        MidiEvent(channel=9, note=42, velocity=60, start_tick=240, duration_ticks=120),
+    ]
+    out = tmp_path / "split.mid"
+    write_midi(events, out, cfg, include_percussion=True)
+    mid = mido.MidiFile(out)
+    melody_drum_msgs = [m for m in mid.tracks[1]
+                        if m.type == "note_on" and m.channel == 9]
+    assert melody_drum_msgs == []
+    drum_msgs = [m for m in mid.tracks[3]
+                 if m.type == "note_on" and m.velocity > 0]
+    assert len(drum_msgs) == 2
+
+
+# --- Title / track names ----------------------------------------------
+
+def test_title_attached_to_meta_track(tmp_path, cfg):
+    events = [MidiEvent(0, 60, 80, 0, 480)]
+    out = tmp_path / "titled.mid"
+    write_midi(events, out, cfg, title="BTC Symphony 2020-2024")
+    mid = mido.MidiFile(out)
+    names = [m.name for m in mid.tracks[0] if m.type == "track_name"]
+    assert "BTC Symphony 2020-2024" in names
+
+
 def test_file_length_matches_event_extent(tmp_path, fixture_events, cfg):
     """The file's total tick length should be at least the latest event end."""
     expected_end = max(e.start_tick + e.duration_ticks for e in fixture_events)

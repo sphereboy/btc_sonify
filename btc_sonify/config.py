@@ -18,6 +18,16 @@ from dataclasses import dataclass
 GM_ACOUSTIC_GRAND = 0
 GM_STRING_ENSEMBLE_1 = 48
 
+# GM standard drum channel (zero-indexed; many DAWs display it as channel 10).
+GM_DRUM_CHANNEL = 9
+
+# GM drum kit MIDI note numbers used by the percussion track.
+DRUM_KICK = 36
+DRUM_SNARE = 38
+DRUM_HI_HAT_CLOSED = 42
+DRUM_CRASH = 49
+DRUM_RIDE_BELL = 53
+
 
 @dataclass(frozen=True)
 class RunConfig:

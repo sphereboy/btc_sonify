@@ -132,8 +132,56 @@ btc_sonify/
 Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
 
 ```bash
-uv run pytest               # 144 tests, ~1s
+uv run pytest               # 189 tests, ~1s
 ```
+
+## Symphony mode
+
+For long ranges (multi-year), single-key sonification can blur the macro narrative. `--mode symphony` segments the timeline at major price-action pivots and turns each segment into a labelled movement:
+
+```bash
+btc-sonify --start 2020-01-01 --end 2024-12-31 --mode symphony \
+  --output output/btc-symphony.mid
+```
+
+What changes per movement:
+
+- **Direction-aware scale** — bull movements use Dorian (bright modal), bear use Phrygian (haunted), sideways use Hijaz (ambiguous, modal). If you pass `--scale` explicitly, it's preserved across all movements.
+- **Root modulates by a perfect fifth** between adjacent movements (A → E → B → F# → C# → G# → …) — classical tonal motion that gives the symphony shape.
+- **Tempo bumps +20%** on movements with above-median realised volatility.
+- **One-beat rest** between movements — the "breath" that announces a new section.
+- **Crash cymbal** marks each transition (third channel — see below).
+
+Movements are auto-detected via peak-trough segmentation (default 20% excursion threshold). To force a specific count:
+
+```bash
+--mode symphony --movements 4
+```
+
+Each run prints a movement breakdown showing what was detected and what choices were made:
+
+```
+┏━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━┓
+┃ #  ┃ label               ┃ candles ┃  return ┃ scale    ┃ root ┃ BPM ┃
+┡━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━┩
+│ 1  │ I. Bear 2020        │      72 │  -33.0% │ phrygian │ A    │ 144 │
+│ 2  │ II. Bull 2020-2021  │     303 │ +741.5% │ dorian   │ E    │ 120 │
+│ 3  │ III. Bull 2021      │      45 │  +41.5% │ dorian   │ B    │ 144 │
+│ …  │ …                   │     …   │   …     │   …      │ …    │ …   │
+└────┴─────────────────────┴─────────┴─────────┴──────────┴──────┴─────┘
+```
+
+## Percussion track
+
+Symphony mode adds a fourth track on the GM standard drum channel (channel 9), playing kit-style drums derived from candle properties:
+
+- **Closed hi-hat** on every candle — the steady heartbeat.
+- **Kick drum** on top-decile volume candles — punctuates the big bars.
+- **Snare** on top-decile range candles — wide-range slaps.
+- **Ride bell** on doji candles — indecision shimmer.
+- **Crash cymbal** at each movement boundary.
+
+Drums sit at 30–65% of the melody's velocity ceiling so they support rather than bulldoze the harmonic content above.
 
 ## All flags
 
@@ -141,12 +189,15 @@ uv run pytest               # 144 tests, ~1s
 --start         Start date (YYYY-MM-DD)
 --end           End date (YYYY-MM-DD)
 --timeframe     1m, 5m, 15m, 30m, 1h, 4h, 1d (default), 1w
---scale         Scale name (default: phrygian)
+--scale         Scale name (default: phrygian; in symphony mode only
+                takes effect if explicitly set)
 --root          Root note A..G with optional #/b (default: A)
 --octaves       Pitch span in octaves (default: 3)
 --bpm           Tempo (default: 120)
 --note-value    quarter (default), eighth, half — duration of one candle
 --output        Output .mid path (default: ./output/btc.mid)
+--mode          plain (default) or symphony — see above
+--movements     Symphony only: force exactly N movements (default: auto)
 --render-wav    Also produce a WAV (requires --soundfont)
 --soundfont     Path to .sf2 soundfont
 --exchange      ccxt exchange ID (default: binanceus; binance.com is
@@ -165,12 +216,12 @@ OHLCV data is cached in `~/.cache/btc-sonify/` as parquet files keyed by exchang
 
 ## Roadmap
 
-The v1 mapping is locked. Future ideas (notes for later, not commitments):
+Future ideas (notes for later, not commitments):
 
-- `--mode symphony` — split a long range into movements at major regime changes (volatility-clustering boundaries)
 - Just-intonation tuning, where consonance correlates with Fibonacci retracement levels
 - Multi-asset: BTC as melody, ETH as counterpoint, on the same timeline
 - Static HTML output that renders chart and score side-by-side, scrubbing in sync
+- MP4 export with the candle chart scrubbing in time with the audio
 
 ## License
 

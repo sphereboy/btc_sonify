@@ -1,9 +1,12 @@
 """Command-line entry point for btc-sonify.
 
-Wires the four pure layers — fetch → map → write → render — into a single
-deterministic command. Reads inputs from Typer-parsed flags, builds a
-RunConfig, shows a rich progress bar during the network fetch, and
-prints a summary panel with note counts and the output path on success.
+Wires the pure layers — fetch → map → write → render — into a single
+deterministic command. Two arrangement modes:
+
+- **plain** (default): one tempo, one key, melody + harmony.
+- **symphony**: split the timeline into movements at major price-action
+  pivots, modulate root by a perfect fifth between movements, bump
+  tempo on high-volatility movements, add a percussion track.
 """
 from __future__ import annotations
 
@@ -25,8 +28,10 @@ from rich.table import Table
 from btc_sonify.config import RunConfig
 from btc_sonify.data import DEFAULT_EXCHANGE, DEFAULT_SYMBOL, fetch_ohlcv
 from btc_sonify.mapping import map_candles_to_events
-from btc_sonify.midi_writer import write_midi
+from btc_sonify.midi_writer import TempoChange, write_midi
+from btc_sonify.percussion import MovementOffset, map_percussion
 from btc_sonify.scales import SCALES
+from btc_sonify.symphony import detect_movements, map_symphony
 
 app = typer.Typer(
     add_completion=False,
@@ -46,7 +51,8 @@ def sonify(
         "--scale",
         help=(
             "Musical scale: major, minor, pentatonic_major, pentatonic_minor, "
-            "dorian, phrygian, hijaz, blues."
+            "dorian, phrygian, hijaz, blues. In symphony mode this only takes "
+            "effect if explicitly set; otherwise per-movement scales are auto-picked."
         ),
     ),
     root: str = typer.Option("A", "--root", help="Root note (A, A#, B, C, ...)."),
@@ -59,6 +65,16 @@ def sonify(
     ),
     output: str = typer.Option(
         "./output/btc.mid", "--output", help="Output .mid file path."
+    ),
+    mode: str = typer.Option(
+        "plain",
+        "--mode",
+        help="Arrangement: plain (single tempo + key) or symphony (movements + drums).",
+    ),
+    movements: int | None = typer.Option(
+        None,
+        "--movements",
+        help="Symphony only: force exactly N equal-sized movements (default: auto-detect).",
     ),
     render_wav: bool = typer.Option(
         False,
@@ -91,13 +107,20 @@ def sonify(
     if note_value not in ("quarter", "eighth", "half"):
         console.print(f"[red]--note-value must be quarter, eighth, or half (got {note_value!r}).[/red]")
         raise typer.Exit(code=2)
+    if mode not in ("plain", "symphony"):
+        console.print(f"[red]--mode must be 'plain' or 'symphony' (got {mode!r}).[/red]")
+        raise typer.Exit(code=2)
     if render_wav and not soundfont:
         console.print("[red]--render-wav requires --soundfont (path to a .sf2 file).[/red]")
         raise typer.Exit(code=2)
+    if movements is not None and mode != "symphony":
+        console.print("[red]--movements is only valid with --mode symphony.[/red]")
+        raise typer.Exit(code=2)
 
-    config = RunConfig(
+    base_config = RunConfig(
         scale=scale, root=root, octaves=octaves, bpm=bpm, note_value=note_value,
     )
+    user_specified_scale = scale != "phrygian"  # default; symphony picks per-movement
 
     # --- Fetch OHLCV with a progress bar ------------------------------
     console.print(f"[cyan]Fetching {symbol} {timeframe} from {exchange} ({start} → {end})…[/cyan]")
@@ -107,20 +130,42 @@ def sonify(
         symbol=symbol, exchange_id=exchange, use_cache=not no_cache,
     )
     if df.empty:
-        console.print(f"[yellow]No candles returned for the given range. Aborting.[/yellow]")
+        console.print("[yellow]No candles returned for the given range. Aborting.[/yellow]")
         raise typer.Exit(code=1)
     console.print(f"  → {len(df)} candles fetched.")
 
     # --- Map to MIDI events ------------------------------------------
-    console.print(f"[cyan]Mapping candles to MIDI events ({scale}, root {root}, {octaves} octaves)…[/cyan]")
-    events = map_candles_to_events(df, config)
-    melody_count = sum(1 for e in events if e.channel == config.melody_channel)
-    harmony_count = sum(1 for e in events if e.channel == config.harmony_channel)
+    if mode == "symphony":
+        events, tempo_changes, percussion_events, rendered_movements = _map_symphony_pipeline(
+            console, df, base_config,
+            forced_movements=movements,
+            user_specified_scale=user_specified_scale,
+        )
+        title = f"BTC Symphony {start} to {end}"
+        include_percussion = True
+    else:
+        console.print(f"[cyan]Mapping candles to MIDI events ({scale}, root {root}, {octaves} octaves)…[/cyan]")
+        events = map_candles_to_events(df, base_config)
+        tempo_changes = None
+        percussion_events = []
+        rendered_movements = None
+        title = None
+        include_percussion = False
+
+    melody_count = sum(1 for e in events if e.channel == base_config.melody_channel)
+    harmony_count = sum(1 for e in events if e.channel == base_config.harmony_channel)
+    drum_count = len(percussion_events)
+    all_events = events + percussion_events
 
     # --- Write the .mid file -----------------------------------------
     output_path = Path(output)
     console.print(f"[cyan]Writing MIDI → {output_path}…[/cyan]")
-    write_midi(events, output_path, config)
+    write_midi(
+        all_events, output_path, base_config,
+        tempo_changes=tempo_changes,
+        include_percussion=include_percussion,
+        title=title,
+    )
 
     # --- Optional WAV render -----------------------------------------
     wav_path: Path | None = None
@@ -138,21 +183,24 @@ def sonify(
             wav_path = None
 
     # --- Summary panel -----------------------------------------------
-    last_tick = max(e.start_tick + e.duration_ticks for e in events)
-    seconds = last_tick / config.ppq * (60 / config.bpm)
-    pitch_range = (
-        min(e.note for e in events),
-        max(e.note for e in events),
-    )
+    last_tick = max(e.start_tick + e.duration_ticks for e in all_events)
+    seconds = last_tick / base_config.ppq * (60 / base_config.bpm)
+    pitches = [e.note for e in events]  # exclude drums from pitch range stat
+    pitch_range = (min(pitches), max(pitches)) if pitches else (0, 0)
 
     table = Table.grid(padding=(0, 2))
     table.add_column(style="dim")
     table.add_column()
+    table.add_row("mode",          mode)
     table.add_row("candles",       f"{len(df)}")
+    if rendered_movements is not None:
+        table.add_row("movements",   f"{len(rendered_movements)}")
     table.add_row("melody notes",  f"{melody_count}")
     table.add_row("harmony notes", f"{harmony_count}")
+    if drum_count:
+        table.add_row("drum hits", f"{drum_count}")
     table.add_row("pitch range",   f"MIDI {pitch_range[0]}..{pitch_range[1]}")
-    table.add_row("duration",      f"{seconds:.1f}s @ {bpm} BPM")
+    table.add_row("duration",      f"{seconds:.1f}s")
     table.add_row("output",        str(output_path))
     if wav_path is not None:
         table.add_row("wav",       str(wav_path))
@@ -160,6 +208,62 @@ def sonify(
     console.print(Panel.fit(
         table, title="[green]btc-sonify[/green]", border_style="green",
     ))
+
+    if rendered_movements is not None:
+        mtable = Table(title="Movements", show_header=True, header_style="bold")
+        mtable.add_column("#")
+        mtable.add_column("label")
+        mtable.add_column("candles", justify="right")
+        mtable.add_column("return", justify="right")
+        mtable.add_column("scale")
+        mtable.add_column("root")
+        mtable.add_column("BPM", justify="right")
+        for r in rendered_movements:
+            mtable.add_row(
+                str(r.movement.index + 1),
+                r.movement.label,
+                str(r.movement.end_idx - r.movement.start_idx + 1),
+                f"{r.movement.avg_return_pct:+.1f}%",
+                r.config.scale,
+                r.config.root,
+                str(r.config.bpm),
+            )
+        console.print(mtable)
+
+
+def _map_symphony_pipeline(
+    console: Console,
+    df,
+    base_config: RunConfig,
+    forced_movements: int | None,
+    user_specified_scale: bool,
+):
+    """Run the symphony orchestration: detect → map melodies/harmonies →
+    map percussion. Returns events, tempo changes, percussion events,
+    and the list of RenderedMovements for the summary panel."""
+    console.print("[cyan]Detecting movements via peak-trough segmentation…[/cyan]")
+    movements = detect_movements(df, movements=forced_movements)
+    console.print(f"  → {len(movements)} movements detected.")
+
+    events, tempo_markers, rendered = map_symphony(
+        df, base_config, movements, user_specified_scale=user_specified_scale,
+    )
+    tempo_changes = [
+        TempoChange(tick=t.tick, bpm=t.bpm, label=t.label) for t in tempo_markers
+    ]
+
+    # Percussion uses the per-movement tick offsets captured during render.
+    offsets = [
+        MovementOffset(
+            start_idx=r.movement.start_idx,
+            end_idx=r.movement.end_idx,
+            tick_offset=r.tick_offset,
+        )
+        for r in rendered
+    ]
+    percussion_events = map_percussion(df, base_config, movement_offsets=offsets)
+
+    return events, tempo_changes, percussion_events, rendered
 
 
 def _fetch_with_progress(
@@ -172,12 +276,7 @@ def _fetch_with_progress(
     exchange_id: str,
     use_cache: bool,
 ):
-    """Wrap fetch_ohlcv with a rich Progress bar that ticks per page.
-
-    The total candle count is unknown until the fetch completes, so the
-    bar shows running totals (M of N format will display the latest
-    total) and a spinner — accurate progress without a known target.
-    """
+    """Wrap fetch_ohlcv with a rich Progress bar that ticks per page."""
     progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
