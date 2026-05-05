@@ -132,8 +132,29 @@ btc_sonify/
 Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
 
 ```bash
-uv run pytest               # 189 tests, ~1s
+uv run pytest               # 209 tests, ~1s
 ```
+
+## Palettes
+
+The default sound is classical (acoustic grand + strings + acoustic kit). For modern arrangements, pick a `--palette`:
+
+```bash
+btc-sonify --start 2020-01-01 --end 2024-12-31 --mode symphony --palette synthwave
+```
+
+Each palette swaps the melody / harmony / drum-kit programs and adds a sub-bass track on a fourth channel:
+
+| Palette | Melody | Harmony | Drums | Bass |
+|---|---|---|---|---|
+| `classical` *(default)* | Acoustic Grand | String Ensemble | Standard kit | — |
+| `synthwave` | Sawtooth Lead | Warm Pad | Electronic kit | Synth Bass 1 |
+| `cinematic` | Synth Brass | Sweep Pad | Power kit | Synth Bass 2 |
+| `electronic` | Rhodes Electric | Bowed Pad | TR-808 kit | Synth Bass 1 |
+
+The same musical content (mapping, scale, articulation, ornaments) plays through all four — they're four different lenses on the same sonification. The sub-bass doubles the close note one octave below at 70% melody velocity, sustaining underneath like a synth pad. Classical has no bass on purpose — orchestral arrangements rarely need a sub layer.
+
+You can override individual instruments in your DAW after import: drag any of Logic's stock plug-ins (Alchemy, Sculpture, Drum Machine Designer) onto the right track to push the modernization further than a GM program number can.
 
 ## Symphony mode
 
@@ -198,6 +219,8 @@ Drums sit at 30–65% of the melody's velocity ceiling so they support rather th
 --output        Output .mid path (default: ./output/btc.mid)
 --mode          plain (default) or symphony — see above
 --movements     Symphony only: force exactly N movements (default: auto)
+--palette       Instrument palette: classical (default), synthwave,
+                cinematic, electronic — see above
 --render-wav    Also produce a WAV (requires --soundfont)
 --soundfont     Path to .sf2 soundfont
 --exchange      ccxt exchange ID (default: binanceus; binance.com is

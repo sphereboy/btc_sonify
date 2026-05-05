@@ -49,13 +49,17 @@ def _track_for_channel(
     track_name: str | None = None,
 ) -> mido.MidiTrack:
     """Build a MidiTrack for one channel, with an optional track name,
-    a program change up front, and delta-timed note_on/note_off pairs."""
+    a program change up front, and delta-timed note_on/note_off pairs.
+
+    Channel 9 (GM drums): the standard kit (program 0) is implicit, but
+    a non-zero program selects an alternate kit (Power, Electronic,
+    TR-808, etc.) — we emit the program_change in that case.
+    """
     track = mido.MidiTrack()
     if track_name:
         track.append(mido.MetaMessage("track_name", name=_ascii_safe(track_name), time=0))
 
-    # Drum channel (9) does not take program changes — the kit is implicit.
-    if channel != GM_DRUM_CHANNEL:
+    if channel != GM_DRUM_CHANNEL or program != 0:
         track.append(mido.Message(
             "program_change", program=program, channel=channel, time=0,
         ))
@@ -131,13 +135,17 @@ def write_midi(
     config: RunConfig,
     tempo_changes: list[TempoChange] | None = None,
     include_percussion: bool = False,
+    include_bass: bool = False,
     title: str | None = None,
 ) -> None:
     """Write the event list to a .mid file at `path`.
 
-    `tempo_changes` overrides the single-tempo default for symphony mode.
-    `include_percussion` adds a fourth track on the GM drum channel —
-    only set this when ``events`` actually contains drum-channel events.
+    Track order: meta → melody → harmony → bass (optional) → percussion
+    (optional). ``tempo_changes`` overrides the single-tempo default for
+    symphony mode. ``include_bass`` and ``include_percussion`` only
+    matter when ``events`` actually contains events on those channels —
+    if you pass them with no matching events, the resulting tracks are
+    just program changes followed by silence (harmless but ugly).
     """
     mid = mido.MidiFile(type=1, ticks_per_beat=config.ppq)
     mid.tracks.append(_build_meta_track(config, tempo_changes, title))
@@ -150,9 +158,14 @@ def write_midi(
         events, config.harmony_channel, config.harmony_program,
         track_name="Harmony",
     ))
+    if include_bass and config.bass_program is not None:
+        mid.tracks.append(_track_for_channel(
+            events, config.bass_channel, config.bass_program,
+            track_name="Bass",
+        ))
     if include_percussion:
         mid.tracks.append(_track_for_channel(
-            events, GM_DRUM_CHANNEL, program=0,  # program ignored on ch9
+            events, GM_DRUM_CHANNEL, program=config.drum_program,
             track_name="Percussion",
         ))
 

@@ -49,10 +49,13 @@ RANGE_DECILE = 0.90
 @dataclass(frozen=True)
 class MovementOffset:
     """Maps a movement's source-DataFrame index range to its tick offset
-    in the global timeline."""
-    start_idx: int        # inclusive
-    end_idx: int          # inclusive
-    tick_offset: int      # ticks to add to the movement's local start
+    in the global timeline. Optionally carries the per-movement RunConfig
+    so consumers (the bass track, future per-movement features) can
+    re-quantize against the right scale/root."""
+    start_idx: int                       # inclusive
+    end_idx: int                         # inclusive
+    tick_offset: int                     # ticks to add to the movement's local start
+    config: RunConfig | None = None      # per-movement config (symphony only)
 
 
 def _scaled_velocity(config: RunConfig, factor: float) -> int:
