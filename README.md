@@ -1,59 +1,177 @@
 # btc-sonify
 
-A Python CLI tool that converts Bitcoin OHLCV candlestick data into music. Provide a date range, timeframe, and musical scale; the tool outputs a MIDI file (and optionally a rendered WAV) where each candle becomes a note with articulation, dynamics, and ornamentation derived from the candle's properties. This is a data sonification project, not a generative-music toy — the same candles in the same scale always produce the same MIDI. Musicality comes from a thoughtful mapping, not randomness.
+> Listen to Bitcoin.
 
-## Status
+A Python CLI that turns Bitcoin's price history into music. Each daily candle becomes a note: pitch from the close, loudness from the volume, articulation from the body, ornaments from the wicks, harmony from the range. The same data always produces the same MIDI — this is **data sonification**, not generative music. Musicality comes from a thoughtful mapping, not randomness.
 
-Step 1 of 8 complete: project skeleton. **Not yet functional** — running `btc-sonify` currently prints the parsed arguments and exits.
+```bash
+btc-sonify --start 2020-01-01 --end 2024-12-31 --scale phrygian
+# 1827 candles → 15 minutes of haunted Bitcoin
+```
+
+## Why
+
+Markets and music share a vocabulary: tension and release, motif and variation, the ratios that the ear finds consonant (3:2, 4:3, 1.618). A candlestick chart already encodes contour, dynamics, and rhythm — it's been a musical score the whole time. We just hadn't been listening.
+
+The mapping here is deliberately strict. There's no random walk, no neural net, no "stylized improvisation." Twelve well-defined rules turn OHLCV into MIDI. Bull markets sound like ascending lines; capitulation candles slam like staccato chords; dojis trill in indecision. The 2020 halving rally and the 2022 collapse have distinct, recognisable shapes when you put them through the same scale.
+
+Default mode is **Phrygian**. It fits Bitcoin's character — searching, modal, slightly haunted.
 
 ## Install
 
-Requires Python 3.11+ and [uv](https://github.com/astral-sh/uv).
+Requires **Python 3.11+** and [uv](https://github.com/astral-sh/uv).
 
 ```bash
+git clone <this repo>
+cd btc_sonify
 uv venv
 uv pip install -e ".[dev]"
 ```
 
-For optional WAV rendering (requires FluidSynth via Homebrew):
+Optional, for rendering directly to WAV instead of opening the .mid in a DAW:
 
 ```bash
-brew install fluid-synth
-uv pip install -e ".[dev,audio]"
+brew install fluid-synth                                     # macOS
+# or:  apt install fluidsynth   (Debian/Ubuntu)
+# Download a free GeneralUser GS soundfont (.sf2) — e.g.:
+# https://schristiancollins.com/generaluser.php
 ```
 
-## Usage
+## Quickstart
 
 ```bash
-# Basic
-btc-sonify --start 2020-01-01 --end 2024-12-31 --timeframe 1d
+# Default: phrygian, A3 root, 3 octaves, 120 BPM, daily candles
+btc-sonify --start 2020-01-01 --end 2024-12-31
 
-# All options
+# Q4 2023 bull run, in pentatonic minor at 90 BPM
 btc-sonify \
-  --start 2020-01-01 \
-  --end 2024-12-31 \
-  --timeframe 1d \
-  --scale phrygian \
-  --root A \
-  --octaves 3 \
-  --bpm 120 \
-  --note-value quarter \
-  --output ./output/btc-2020-2024.mid \
-  --render-wav \
-  --soundfont ./soundfonts/GeneralUser.sf2
+  --start 2023-10-01 --end 2023-12-31 \
+  --scale pentatonic_minor --root D --bpm 90 \
+  --output output/btc-q4-2023.mid
+
+# Full pipeline including WAV
+btc-sonify \
+  --start 2020-01-01 --end 2024-12-31 \
+  --scale hijaz --octaves 4 \
+  --output output/btc-2020-2024.mid \
+  --render-wav --soundfont ./soundfonts/GeneralUser.sf2
 ```
+
+Output is a `.mid` file. Drop it into Logic, Ableton, GarageBand, or your DAW of choice — both tracks are tagged with the right General MIDI program (Acoustic Grand for melody, String Ensemble 1 for harmony) so it sounds reasonable on any GM-compatible synth.
 
 Run `btc-sonify --help` for the full option list.
 
+## The mapping
+
+Every axis below is exposed as a CLI flag or config field, so this is the starting point — not the only point.
+
+| Candle property | → | Musical dimension |
+|---|---|---|
+| **Close price** (min-max normalized over the dataset) | → | **Pitch** (snapped to scale across N octaves) |
+| **Volume** (log-normalized) | → | **Velocity** (loudness, 40–127) |
+| **Direction × body ratio** | → | **Articulation** (legato / normal / marcato / staccato) |
+| **Body ratio < 0.1** (doji) | → | **Trill** between close and one scale-step above |
+| **Upper wick > 2× body** | → | Grace note one scale-step **above** |
+| **Lower wick > 2× body** | → | Grace note one scale-step **below** |
+| **High–low range** (terciles) | → | **Harmony** chord size: single → diad → triad |
+
+The harmony track plays underneath at 60% velocity on a different MIDI channel, so it sustains like a pad while the melody articulates the candle's shape.
+
+A few specifics worth knowing:
+
+- **Why min-max over the whole series, not rolling.** We want the macro shape audible — a 5-year run should *sound like* a five-year run, not five repeats of the same arc.
+- **Why log-scale velocity.** Volume distributions are heavy-tailed. Linear normalization makes the median candle whisper-quiet and the rare booms deafening. Log compresses the tail.
+- **Why no random.** The same dataset in the same scale always produces the same MIDI. You can A/B two scales on the same range and trust the differences are the scales, not noise.
+- **Why scale-aware intervals.** The "fifth" in the harmony chord is *4 scale-degrees up*, not 7 semitones. In phrygian or hijaz that produces a defensibly modal chord; chromatic intervals would clash.
+
+Full spec lives in [`CLAUDE.md`](CLAUDE.md).
+
+## Scales
+
+Eight scales are built in, each with a different emotional fingerprint:
+
+| Scale | Vibe | Good for |
+|---|---|---|
+| `major` | Bright, resolved | Sustained bull markets |
+| `minor` | Sombre, classical | Bear cycles |
+| `pentatonic_major` | Bright, "no wrong notes" | Newcomer-friendly listening |
+| `pentatonic_minor` | Bluesy, contemplative | Sideways markets |
+| `dorian` | Modal, hopeful-melancholy | Long mid-cycle stretches |
+| `phrygian` *(default)* | Searching, haunted | Bitcoin's whole character |
+| `hijaz` | Arabic / Middle Eastern, mystical | Anything that wants drama |
+| `blues` | Gritty, ambivalent | Capitulation candles, fakeouts |
+
+## Examples
+
+> *Sample MP3s coming — to be hosted on Cloudflare R2.*
+
+- 🔊 *2020–2024 BTC in phrygian* — `[link]`
+- 🔊 *The 2022 collapse in minor* — `[link]`
+- 🔊 *Q4 2023 ETF rally in hijaz* — `[link]`
+- 🔊 *2017 mania in major pentatonic* — `[link]`
+
+Generate your own:
+
+```bash
+btc-sonify --start 2022-05-01 --end 2022-12-31 --scale minor --bpm 80
+```
+
+## Architecture
+
+```
+btc_sonify/
+├── scales.py        # Scale definitions and pitch quantization (pure math)
+├── data.py          # OHLCV fetching via ccxt + parquet caching
+├── config.py        # RunConfig dataclass — every knob in one place
+├── mapping.py       # OHLCV DataFrame → list of MIDI events (the heart)
+├── midi_writer.py   # Event list → Type-1 SMF via mido
+├── render.py        # Optional WAV render via fluidsynth CLI
+└── cli.py           # Typer entry point — wires the pipeline
+```
+
+Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
+
+```bash
+uv run pytest               # 144 tests, ~1s
+```
+
+## All flags
+
+```
+--start         Start date (YYYY-MM-DD)
+--end           End date (YYYY-MM-DD)
+--timeframe     1m, 5m, 15m, 30m, 1h, 4h, 1d (default), 1w
+--scale         Scale name (default: phrygian)
+--root          Root note A..G with optional #/b (default: A)
+--octaves       Pitch span in octaves (default: 3)
+--bpm           Tempo (default: 120)
+--note-value    quarter (default), eighth, half — duration of one candle
+--output        Output .mid path (default: ./output/btc.mid)
+--render-wav    Also produce a WAV (requires --soundfont)
+--soundfont     Path to .sf2 soundfont
+--exchange      ccxt exchange ID (default: binanceus; binance.com is
+                geo-blocked from US IPs)
+--symbol        Trading pair (default: BTC/USDT)
+--no-cache      Bypass the parquet cache and refetch
+```
+
+OHLCV data is cached in `~/.cache/btc-sonify/` as parquet files keyed by exchange + symbol + timeframe + date range. Cache hits short-circuit the network entirely. Use `--no-cache` to refetch.
+
+## Caveats
+
+- Defaults to **Binance.US** because binance.com returns HTTP 451 from US IPs. Pass `--exchange kraken` or `--exchange coinbase` for other sources; the candle data will differ slightly between exchanges.
+- The cache is keyed by exact date range, so `2020-01-01..2024-12-31` and `2020-01-02..2024-12-31` are independent fetches. This is by design — if you want to extend a range, just re-fetch.
+- WAV rendering requires the `fluidsynth` binary on PATH and a soundfont file. Without those, you still get a valid `.mid` to open in any DAW.
+
 ## Roadmap
 
-- [x] **1.** Project skeleton + `pyproject.toml`
-- [ ] **2.** `scales.py` — scale definitions + pitch quantization
-- [ ] **3.** `data.py` — OHLCV fetching via ccxt with parquet cache
-- [ ] **4.** `mapping.py` — OHLCV → MIDI event list (the core mapping)
-- [ ] **5.** `midi_writer.py` — write `.mid` files via mido
-- [ ] **6.** `cli.py` — wire everything together with progress bars
-- [ ] **7.** `render.py` — optional WAV render via FluidSynth
-- [ ] **8.** Full README with mapping philosophy and audio samples
+The v1 mapping is locked. Future ideas (notes for later, not commitments):
 
-See `CLAUDE.md` for the full mapping spec and project handoff.
+- `--mode symphony` — split a long range into movements at major regime changes (volatility-clustering boundaries)
+- Just-intonation tuning, where consonance correlates with Fibonacci retracement levels
+- Multi-asset: BTC as melody, ETH as counterpoint, on the same timeline
+- Static HTML output that renders chart and score side-by-side, scrubbing in sync
+
+## License
+
+MIT.
