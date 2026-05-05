@@ -126,6 +126,28 @@ class RunConfig:
     # Ornamentation
     wick_grace_multiplier: float = 2.0  # wick > 2 * body_size triggers grace
 
+    # Within-candle melodic motion. For non-doji candles we now play a
+    # short phrase across each candle slot — open→close, or full
+    # open→low→high→close traversal on wide-range bars — instead of
+    # one static note on the close. This is the single biggest "soul"
+    # win: the melody actually moves with the price action, instead of
+    # sitting on the destination.
+    range_modest_factor: float = 0.3   # range < median*this → 1 note (no motion)
+
+    # Humanization. Real performers are slightly imperfect on purpose.
+    # Velocity jitter and micro-timing wobble are deterministic functions
+    # of the candle index so determinism (same input → same MIDI) is
+    # preserved.
+    humanize: bool = True
+    velocity_jitter_range: int = 8     # ±N velocity per note
+    timing_jitter_ticks: int = 3       # ±N ticks per note (subtle ahead/behind)
+
+    # Rest insertion for phrasing. Candles in the bottom N percentile of
+    # volume become silent in the melody — the harmony pad and drums
+    # carry through, but the lead "breathes". This is what makes the
+    # piece feel composed instead of mechanical.
+    rest_volume_percentile: float = 0.10
+
     # Channels and instruments
     melody_channel: int = 0
     harmony_channel: int = 1

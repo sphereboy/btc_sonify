@@ -233,8 +233,9 @@ def test_velocity_always_in_band(cfg):
         assert cfg.velocity_min <= e.velocity <= cfg.velocity_max
 
 
-def test_zero_volume_clamps_to_velocity_min(cfg):
+def test_zero_volume_clamps_to_velocity_min():
     """CLAUDE.md edge case: volume = 0 must not crash and must clamp."""
+    cfg = RunConfig(humanize=False)  # strict mode for exact-velocity check
     df = _df([
         _candle(100, 110, 99, 105, v=0),
         _candle(100, 110, 99, 105, v=0),
@@ -320,33 +321,36 @@ def test_long_wick_doji_gets_two_graces(cfg):
     assert len(trill) == cfg.trill_subdivisions
 
 
-def test_marcato_red_strong_body_has_velocity_bonus(cfg):
+def test_marcato_red_strong_body_has_velocity_bonus():
     """Strong red body should add marcato_velocity_bonus."""
-    # Rig two candles with identical volume → identical base velocity.
-    # One green strong, one red strong. Red main note velocity should be
-    # exactly +bonus higher than green's.
+    cfg = RunConfig(humanize=False)  # strict mode for exact-velocity check
     df = _df([
         _candle(100, 110, 100, 109, v=500),  # green strong
         _candle(109, 110, 100, 100, v=500),  # red strong, same volume
     ])
     events = map_candles_to_events(df, cfg)
-    melody = sorted(
-        (e for e in events if e.channel == cfg.melody_channel
-         and e.duration_ticks > cfg.grace_ticks),
-        key=lambda e: e.start_tick,
-    )
-    assert melody[1].velocity - melody[0].velocity == cfg.marcato_velocity_bonus
+    # Strong-body phrases yield 2 sub-notes; first sub-note of each candle
+    # is at start_tick == candle_start. Pick those for the comparison.
+    candle0_start = cfg.grace_ticks
+    candle1_start = cfg.grace_ticks + cfg.candle_ticks
+    green = next(e for e in events if e.channel == cfg.melody_channel
+                 and e.start_tick == candle0_start)
+    red = next(e for e in events if e.channel == cfg.melody_channel
+               and e.start_tick == candle1_start)
+    assert red.velocity - green.velocity == cfg.marcato_velocity_bonus
 
 
-def test_harmony_velocity_is_60_percent_of_melody(cfg):
+def test_harmony_velocity_is_60_percent_of_melody():
+    cfg = RunConfig(humanize=False)  # strict mode for exact-factor check
     df = _df([_candle(100, 110, 99, 105, v=500)])
     events = map_candles_to_events(df, cfg)
-    melody = [e for e in events if e.channel == cfg.melody_channel
-              and e.duration_ticks > cfg.grace_ticks]
+    candle_start = cfg.grace_ticks
+    melody_first = next(e for e in events if e.channel == cfg.melody_channel
+                        and e.start_tick == candle_start)
     harmony = [e for e in events if e.channel == cfg.harmony_channel]
     expected_h_vel = max(cfg.velocity_min,
                          min(cfg.velocity_max,
-                             int(round(melody[0].velocity * cfg.harmony_velocity_factor))))
+                             int(round(melody_first.velocity * cfg.harmony_velocity_factor))))
     assert all(e.velocity == expected_h_vel for e in harmony)
 
 

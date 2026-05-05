@@ -74,6 +74,8 @@ Every axis below is exposed as a CLI flag or config field, so this is the starti
 | **Upper wick > 2× body** | → | Grace note one scale-step **above** |
 | **Lower wick > 2× body** | → | Grace note one scale-step **below** |
 | **High–low range** (terciles) | → | **Harmony** chord size: single → diad → triad |
+| **Open / High / Low / Close** (within candle) | → | **Within-candle motion** — non-doji bars play 2 or 4 sub-notes traversing the OHLC sequence, so the melody contours *with* the price action instead of sitting on the close |
+| **Volume bottom decile** | → | **Rest** — quiet bars drop the melody, harmony pad carries through (the breath) |
 
 The harmony track plays underneath at 60% velocity on a different MIDI channel, so it sustains like a pad while the melody articulates the candle's shape.
 
@@ -83,6 +85,8 @@ A few specifics worth knowing:
 - **Why log-scale velocity.** Volume distributions are heavy-tailed. Linear normalization makes the median candle whisper-quiet and the rare booms deafening. Log compresses the tail.
 - **Why no random.** The same dataset in the same scale always produces the same MIDI. You can A/B two scales on the same range and trust the differences are the scales, not noise.
 - **Why scale-aware intervals.** The "fifth" in the harmony chord is *4 scale-degrees up*, not 7 semitones. In phrygian or hijaz that produces a defensibly modal chord; chromatic intervals would clash.
+- **Why within-candle motion.** A static one-note-per-candle melody sounds like a metronome with a pitch wheel. Real candles tell a story — open, the wick excursions, the close. Playing those four points in narrative order (green: dipped then rallied; red: probed up then gave back) gives the melody contour *inside* every beat. Same data, ~70% more notes, dramatically more shape.
+- **Why humanization.** Real performers are imperfect on purpose. Velocity gets ±8 jitter and onsets ±3 ticks, both deterministically seeded from the candle index. Determinism is preserved (same input → same MIDI) but the lead stops sounding step-sequenced. Set `--no-humanize` if you want the strict mechanical feel.
 
 Full spec lives in [`CLAUDE.md`](CLAUDE.md).
 
@@ -132,7 +136,7 @@ btc_sonify/
 Each layer is a pure function with no global state. The CLI is just orchestration — every step is unit-tested in isolation, plus a fixture-based end-to-end suite.
 
 ```bash
-uv run pytest               # 224 tests, ~1.5s
+uv run pytest               # 246 tests, ~1.5s
 ```
 
 ## Palettes

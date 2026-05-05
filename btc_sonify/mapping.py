@@ -11,10 +11,27 @@ chord size from candle range — come straight from CLAUDE.md "Core
 mapping spec". Each rule is exposed as a named threshold on RunConfig
 so they can be tuned later without surgery on this module.
 
+**Within-candle melodic motion** — instead of one static note on the
+close, non-doji candles play a short phrase across the slot: open→close
+on modest moves, full open→low→high→close traversal on wide-range bars
+(reversed for red, since red candles probe up before falling). This
+gives the melody actual contour inside each beat — the single biggest
+'soul' improvement over a metronomic one-note-per-candle mapping.
+
+**Humanization** — velocity gets a deterministic ±N jitter per note and
+note onsets are nudged ±N ticks. Both are seeded from candle index +
+sub-position so determinism is preserved (same input always yields the
+same MIDI), but the lead no longer sounds like a quantized step
+sequencer. Toggle with ``RunConfig(humanize=False)`` for strict mode.
+
+**Rest insertion** — candles in the bottom percentile of volume drop
+their melody note entirely, leaving the harmony pad and percussion to
+carry through. This is the 'breath' that makes the piece feel composed.
+
 The output is a list of ``MidiEvent`` namedtuples in (channel, note,
-velocity, start_tick, duration_ticks) form. Events are emitted in
-chronological order, but the writer in step 5 should still sort defensively
-because grace notes for candle N start *before* the main note for N.
+velocity, start_tick, duration_ticks) form. The writer in step 5 sorts
+defensively because grace notes for candle N start *before* the main
+note for N, and humanized timing offsets can re-order adjacent notes.
 
 Padding: the entire song is shifted forward by one ``grace_ticks`` so the
 first candle's grace note (if any) has space to play before tick 0
@@ -155,6 +172,63 @@ def _harmony_notes(
     return [close_note, third, fifth]
 
 
+# --- Within-candle phrase ----------------------------------------------
+
+def _melody_phrase(feat: dict, range_median: float, modest_factor: float) -> list[float]:
+    """Choose the price points the melody traverses inside one candle.
+
+    Returns 1, 2, or 4 prices. Doji is handled separately (trill); this
+    function assumes a non-doji candle. The shape rules:
+
+    - Tiny range (range < median * modest_factor) → 1 note (close).
+      Nothing meaningful happened; don't pretend it did.
+    - Strong-body OR not-wide range → 2 notes (open, close). The body is
+      the story; play the body.
+    - Wide range with mid body → 4 notes traversing the wicks in the
+      conventional reading order: green = open→low→high→close (price
+      dipped, rallied, settled), red = open→high→low→close (price
+      probed up, gave back, settled).
+    """
+    rng = feat["range"]
+    body_ratio = feat["body_ratio"]
+
+    if range_median > 0 and rng < range_median * modest_factor:
+        return [feat["close"]]
+    if body_ratio > 0.7 or (range_median > 0 and rng < range_median):
+        return [feat["open"], feat["close"]]
+    if feat["direction"] == "green":
+        return [feat["open"], feat["low"], feat["high"], feat["close"]]
+    return [feat["open"], feat["high"], feat["low"], feat["close"]]
+
+
+# --- Humanization -------------------------------------------------------
+
+# Knuth's multiplicative hash constant — mixes bits well for small inputs.
+_KNUTH = 2654435761
+
+
+def _stable_jitter(idx: int, salt: int, max_abs: int) -> int:
+    """Deterministic pseudo-random integer in [-max_abs, +max_abs] from
+    (idx, salt). Stable across Python runs (no hash() use)."""
+    if max_abs <= 0:
+        return 0
+    h = ((idx + 1) * (salt + 17) * _KNUTH) & 0xFFFFFFFF
+    return h % (2 * max_abs + 1) - max_abs
+
+
+def _humanize_velocity(base: int, idx: int, salt: int, config: RunConfig) -> int:
+    if not config.humanize:
+        return base
+    jitter = _stable_jitter(idx, salt, config.velocity_jitter_range)
+    return max(config.velocity_min, min(config.velocity_max, base + jitter))
+
+
+def _humanize_timing(idx: int, salt: int, config: RunConfig) -> int:
+    if not config.humanize:
+        return 0
+    return _stable_jitter(idx, salt + 1000, config.timing_jitter_ticks)
+
+
 def _range_tiers(ranges: pd.Series) -> np.ndarray:
     """Bucket each candle's high-low range into tier 0/1/2 by tercile.
 
@@ -197,9 +271,26 @@ def map_candles_to_events(
     volumes = df["volume"].reset_index(drop=True)
     ranges = (df["high"] - df["low"]).reset_index(drop=True)
 
-    norm_close = _normalize_close(closes)
     velocities = _normalize_volume_log(volumes, config.velocity_min, config.velocity_max)
     tiers = _range_tiers(ranges)
+    range_median = float(ranges.median()) if len(ranges) else 0.0
+
+    # Single normalization scheme based on close min/max — within-candle
+    # wicks may fall slightly outside [0,1] but quantize_to_scale clamps.
+    close_min = float(closes.min())
+    close_max = float(closes.max())
+
+    def normalize(p: float) -> float:
+        if close_max == close_min:
+            return 0.0
+        return (float(p) - close_min) / (close_max - close_min)
+
+    # Rest insertion threshold (bottom N% of volumes are silent in melody).
+    rest_pct = config.rest_volume_percentile
+    if rest_pct > 0 and len(volumes) >= 10:
+        rest_threshold = float(np.quantile(volumes.to_numpy(dtype=float), rest_pct))
+    else:
+        rest_threshold = -1.0  # disabled — no rests
 
     candle_ticks = config.candle_ticks
     grace_ticks = config.grace_ticks
@@ -211,34 +302,43 @@ def map_candles_to_events(
         feat = _candle_features(row)
         candle_start = pad + i * candle_ticks
 
-        # --- Pitch: snap normalized close to scale ladder
         close_note = quantize_to_scale(
-            norm_close[i], config.scale, root_midi, config.octaves
+            normalize(closes[i]), config.scale, root_midi, config.octaves
         )
 
-        # --- Velocity: log-normalized volume, clamp + cast
         base_velocity = int(round(velocities[i]))
         base_velocity = max(config.velocity_min, min(config.velocity_max, base_velocity))
 
-        # --- Articulation / trill (doji is its own branch)
         is_doji = feat["body_ratio"] < config.body_ratio_doji
+        is_rest = (rest_threshold > 0 and float(volumes[i]) <= rest_threshold)
 
-        if is_doji:
-            # Trill: alternate close note and one scale-step above for
-            # the candle's full slot, divided into N equal subdivisions.
+        # --- Melody branch -------------------------------------------
+        if is_rest:
+            # Skip melody entirely — the harmony pad and drums carry through.
+            # We still keep a "phantom" velocity for harmony-velocity scaling
+            # so quiet bars get quiet harmony pads, not just silent melody
+            # over loud strings.
+            melody_velocity_for_harmony = base_velocity
+
+        elif is_doji:
+            # Trill: alternate close and one scale-step above for the
+            # candle's full slot, divided into N subdivisions.
             up = scale_step(close_note, scale_notes, 1)
             n = max(2, config.trill_subdivisions)
             sub = candle_ticks // n
             for k in range(n):
                 pitch = close_note if k % 2 == 0 else up
+                v = _humanize_velocity(base_velocity, i, k, config)
+                t_off = _humanize_timing(i, k, config) if k > 0 else 0
                 events.append(MidiEvent(
                     channel=config.melody_channel,
                     note=pitch,
-                    velocity=base_velocity,
-                    start_tick=candle_start + k * sub,
+                    velocity=v,
+                    start_tick=candle_start + k * sub + t_off,
                     duration_ticks=sub,
                 ))
             melody_velocity_for_harmony = base_velocity
+
         else:
             fraction, vel_bonus = _articulation_fraction(
                 feat["direction"], feat["body_ratio"], config
@@ -247,52 +347,66 @@ def map_candles_to_events(
                 config.velocity_min,
                 min(config.velocity_max, base_velocity + vel_bonus),
             )
-            events.append(MidiEvent(
-                channel=config.melody_channel,
-                note=close_note,
-                velocity=note_velocity,
-                start_tick=candle_start,
-                duration_ticks=max(1, int(round(candle_ticks * fraction))),
-            ))
+
+            # Within-candle phrase: 1, 2, or 4 prices traversed across the slot.
+            phrase = _melody_phrase(feat, range_median, config.range_modest_factor)
+            n_notes = len(phrase)
+            sub = candle_ticks // n_notes if n_notes > 0 else candle_ticks
+            sub_dur = max(1, int(round(sub * fraction)))
+
+            for k, price in enumerate(phrase):
+                pitch = quantize_to_scale(
+                    normalize(price), config.scale, root_midi, config.octaves
+                )
+                v = _humanize_velocity(note_velocity, i, k, config)
+                # Don't offset the very first sub-note (the candle's
+                # downbeat) — keep the grid intact at the bar line.
+                t_off = _humanize_timing(i, k, config) if k > 0 else 0
+                events.append(MidiEvent(
+                    channel=config.melody_channel,
+                    note=pitch,
+                    velocity=v,
+                    start_tick=candle_start + k * sub + t_off,
+                    duration_ticks=sub_dur,
+                ))
             melody_velocity_for_harmony = note_velocity
 
-        # --- Ornamentation: long-wick grace notes
-        # A grace plays for grace_ticks duration, ending exactly when the
-        # main note begins. Both wick directions can fire on the same
-        # candle — that's the "long-wick doji" case from CLAUDE.md.
-        if feat["upper_wick"] > config.wick_grace_multiplier * feat["body_size"]:
-            grace = scale_step(close_note, scale_notes, 1)
-            events.append(MidiEvent(
-                channel=config.melody_channel,
-                note=grace,
-                velocity=base_velocity,
-                start_tick=candle_start - grace_ticks,
-                duration_ticks=grace_ticks,
-            ))
-        if feat["lower_wick"] > config.wick_grace_multiplier * feat["body_size"]:
-            grace = scale_step(close_note, scale_notes, -1)
-            events.append(MidiEvent(
-                channel=config.melody_channel,
-                note=grace,
-                velocity=base_velocity,
-                start_tick=candle_start - grace_ticks,
-                duration_ticks=grace_ticks,
-            ))
+        # --- Ornamentation: long-wick grace notes (skip on rest) -----
+        if not is_rest:
+            grace_velocity = _humanize_velocity(base_velocity, i, 50, config)
+            if feat["upper_wick"] > config.wick_grace_multiplier * feat["body_size"]:
+                grace = scale_step(close_note, scale_notes, 1)
+                events.append(MidiEvent(
+                    channel=config.melody_channel,
+                    note=grace,
+                    velocity=grace_velocity,
+                    start_tick=candle_start - grace_ticks,
+                    duration_ticks=grace_ticks,
+                ))
+            if feat["lower_wick"] > config.wick_grace_multiplier * feat["body_size"]:
+                grace = scale_step(close_note, scale_notes, -1)
+                events.append(MidiEvent(
+                    channel=config.melody_channel,
+                    note=grace,
+                    velocity=grace_velocity,
+                    start_tick=candle_start - grace_ticks,
+                    duration_ticks=grace_ticks,
+                ))
 
-        # --- Harmony track: chord on the second channel
+        # --- Harmony track: chord on the second channel -------------
         chord = _harmony_notes(close_note, int(tiers[i]), scale_notes)
-        h_vel = max(
+        h_vel_base = max(
             config.velocity_min,
             min(config.velocity_max,
                 int(round(melody_velocity_for_harmony * config.harmony_velocity_factor))),
         )
-        # Harmony holds for the full candle slot regardless of melody
-        # articulation — pad-like sustain under whatever the melody is doing.
-        for note in chord:
+        for j, note in enumerate(chord):
+            # Salt with +100 so harmony jitters independently of melody.
+            v = _humanize_velocity(h_vel_base, i, j + 100, config)
             events.append(MidiEvent(
                 channel=config.harmony_channel,
                 note=note,
-                velocity=h_vel,
+                velocity=v,
                 start_tick=candle_start,
                 duration_ticks=candle_ticks,
             ))
@@ -310,4 +424,8 @@ __all__ = [
     "_articulation_fraction",
     "_harmony_notes",
     "_range_tiers",
+    "_melody_phrase",
+    "_stable_jitter",
+    "_humanize_velocity",
+    "_humanize_timing",
 ]

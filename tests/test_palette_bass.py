@@ -105,10 +105,15 @@ def test_bass_events_on_bass_channel():
 
 def test_bass_pitch_one_octave_below_melody():
     """Bass should be exactly 12 semitones below the quantized close."""
+    from dataclasses import replace
     from btc_sonify.mapping import map_candles_to_events
-    cfg = RunConfig().with_palette(PALETTES["synthwave"])
-    # All non-doji candles (open differs from close) so melody is one
-    # note per candle — easier to align with bass for comparison.
+    # Strict mode: no humanization, force single-note phrases (so the one
+    # melody note per candle IS the close, matching what bass plays).
+    cfg = replace(
+        RunConfig().with_palette(PALETTES["synthwave"]),
+        humanize=False,
+        range_modest_factor=10.0,  # all candles → 1-note phrase (close only)
+    )
     df = _df([_candle(100, 130, 90, 110 + i * 5, v=500) for i in range(8)])
     melody = [e for e in map_candles_to_events(df, cfg)
               if e.channel == cfg.melody_channel
