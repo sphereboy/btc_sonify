@@ -22,9 +22,9 @@ import ccxt
 import pandas as pd
 
 DEFAULT_SYMBOL = "BTC/USDT"
-# binance.com is geo-blocked from the US (HTTP 451). The owner runs this
-# from Miami, so we default to binance.us — same OHLCV API, no auth, works
-# from US IPs. Other ccxt-supported exchanges can be passed via the CLI.
+# binance.com is geo-blocked from the US (HTTP 451), so we default to
+# binance.us — same OHLCV API, no auth, works from US IPs. Other
+# ccxt-supported exchanges can be passed via the CLI.
 DEFAULT_EXCHANGE = "binanceus"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "btc-sonify"
 
