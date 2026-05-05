@@ -122,17 +122,20 @@ def sonify(
     console.print(f"[cyan]Writing MIDI → {output_path}…[/cyan]")
     write_midi(events, output_path, config)
 
-    # --- Optional WAV render (step 7) -------------------------------
+    # --- Optional WAV render -----------------------------------------
     wav_path: Path | None = None
     if render_wav:
+        from btc_sonify.render import (
+            FluidSynthMissingError,
+            render_wav as do_render,
+        )
+        wav_path = output_path.with_suffix(".wav")
+        console.print(f"[cyan]Rendering WAV → {wav_path}…[/cyan]")
         try:
-            from btc_sonify.render import render_wav as do_render
-        except ImportError:
-            console.print("[yellow]WAV rendering not available — see README for FluidSynth setup.[/yellow]")
-        else:
-            wav_path = output_path.with_suffix(".wav")
-            console.print(f"[cyan]Rendering WAV → {wav_path}…[/cyan]")
             do_render(output_path, Path(soundfont), wav_path)
+        except (FluidSynthMissingError, FileNotFoundError, RuntimeError) as exc:
+            console.print(f"[yellow]WAV render skipped: {exc}[/yellow]")
+            wav_path = None
 
     # --- Summary panel -----------------------------------------------
     last_tick = max(e.start_tick + e.duration_ticks for e in events)
