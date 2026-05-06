@@ -193,6 +193,7 @@ What changes per movement:
 - **Direction-aware scale** — bull movements use Dorian (bright modal), bear use Phrygian (haunted), sideways use Hijaz (ambiguous, modal). If you pass `--scale` explicitly, it's preserved across all movements.
 - **Root modulates by a perfect fifth** between adjacent movements (A → E → B → F# → C# → G# → …) — classical tonal motion that gives the symphony shape.
 - **Tempo bumps +20%** on movements with above-median realised volatility.
+- **Rubato — within-movement tempo breathing.** On top of the per-movement tempo, every candle gets a smoothed BPM modulation that *takes time* into structural events (local pivots, volatility regime shifts, EMA20/50 crossovers) and *pushes through* sustained trending runs. The piece slows into climaxes and accelerates through trends, the way a pianist would. Default-on for `classical` and `cinematic` palettes; default-off for `synthwave` and `electronic` (those genres want a grid). Override with `--rubato` / `--no-rubato`. The audit invariant is preserved — same OHLCV + same config still produces a byte-identical MIDI.
 - **One-beat rest** between movements — the "breath" that announces a new section.
 - **Crash cymbal** marks each transition (third channel — see below).
 
@@ -244,6 +245,9 @@ Drums sit at 30–65% of the melody's velocity ceiling so they support rather th
 --movements     Symphony only: force exactly N movements (default: auto)
 --palette       Instrument palette: classical (default), synthwave,
                 cinematic, electronic — see above
+--rubato/       Symphony only: enable/disable within-movement tempo
+--no-rubato     breathing. Default depends on palette (on for classical/
+                cinematic, off for synthwave/electronic).
 --visualize     Also write an interactive HTML visualizer next to the .mid
 --audio-file    Audio filename to embed in the visualizer (default:
                 <output-stem>.mp3)

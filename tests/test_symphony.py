@@ -181,11 +181,15 @@ def test_map_symphony_empty_movements_returns_empty():
 
 
 def test_map_symphony_emits_one_tempo_marker_per_movement():
+    """One *labelled* (headline) tempo marker per movement. Rubato may
+    interleave additional unlabelled markers within each movement; this
+    test pins the headline-count contract."""
     base = RunConfig()
     df = _synthetic_df([100 + i for i in range(60)])
     movements = detect_movements(df, movements=3)
     events, markers, rendered = map_symphony(df, base, movements)
-    assert len(markers) == 3
+    headlines = [m for m in markers if m.label]
+    assert len(headlines) == 3
     assert len(rendered) == 3
 
 
@@ -258,7 +262,8 @@ def test_map_symphony_full_pipeline_on_fixture(fixture_df):
     movements = detect_movements(fixture_df, movements=3)
     events, markers, rendered = map_symphony(fixture_df, base, movements)
     assert len(events) > 0
-    assert len(markers) == 3
+    headlines = [m for m in markers if m.label]
+    assert len(headlines) == 3
     assert len(rendered) == 3
     # All event ticks must be non-negative
     assert all(e.start_tick >= 0 for e in events)

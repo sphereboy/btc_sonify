@@ -280,6 +280,12 @@ def map_symphony(
     Each movement is mapped independently (its own pitch range, its own
     articulation rhythms) and concatenated with a one-beat rest between
     movements. Tick offsets accumulate across the whole timeline.
+
+    Tempo markers come in two flavours and are returned interleaved
+    (sorted by tick): one labelled headline marker per movement
+    (carries the movement name, used by DAWs as a section flag), plus
+    unlabelled within-movement rubato markers when rubato is enabled
+    on that movement's config (see :mod:`btc_sonify.rubato`).
     """
     if not movements:
         return [], [], []
@@ -289,6 +295,8 @@ def map_symphony(
     all_events: list[MidiEvent] = []
     tempo_markers: list[TempoMarker] = []
     rendered: list[RenderedMovement] = []
+    movement_cfgs: list[RunConfig] = []
+    movement_offsets: list[int] = []
     prev_root: str | None = None
     prev_mov: Movement | None = None
     tick_offset = 0
@@ -310,6 +318,8 @@ def map_symphony(
         rendered.append(RenderedMovement(
             movement=movement, config=cfg, tick_offset=tick_offset,
         ))
+        movement_cfgs.append(cfg)
+        movement_offsets.append(tick_offset)
 
         shifted = [
             MidiEvent(
@@ -331,6 +341,17 @@ def map_symphony(
 
         prev_root = used_root
         prev_mov = movement
+
+    # Rubato lives in its own module to keep the symphony orchestration
+    # focused on movement detection + per-movement config; import here
+    # to avoid a circular import (rubato pulls in TempoMarker from us).
+    from btc_sonify.rubato import interleave_rubato_markers
+    rubato_markers = interleave_rubato_markers(
+        df, movements, movement_cfgs, movement_offsets, base_config,
+    )
+    if rubato_markers:
+        tempo_markers.extend(rubato_markers)
+        tempo_markers.sort(key=lambda m: m.tick)
 
     return all_events, tempo_markers, rendered
 

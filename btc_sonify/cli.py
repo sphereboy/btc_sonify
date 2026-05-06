@@ -84,6 +84,16 @@ def sonify(
         "--palette",
         help="Instrument palette: classical, synthwave, cinematic, electronic.",
     ),
+    rubato: bool | None = typer.Option(
+        None,
+        "--rubato/--no-rubato",
+        help=(
+            "Enable within-movement tempo breathing (rallentando into "
+            "structural events, accelerando through trends). Default is "
+            "palette-dependent: on for classical/cinematic, off for "
+            "synthwave/electronic. Symphony mode only."
+        ),
+    ),
     visualize: bool = typer.Option(
         False,
         "--visualize",
@@ -142,6 +152,9 @@ def sonify(
     base_config = RunConfig(
         scale=scale, root=root, octaves=octaves, bpm=bpm, note_value=note_value,
     ).with_palette(PALETTES[palette])
+    # CLI --rubato/--no-rubato overrides the palette default when supplied.
+    if rubato is not None:
+        base_config = base_config.with_rubato(rubato)
     user_specified_scale = scale != "phrygian"  # default; symphony picks per-movement
 
     # --- Fetch OHLCV with a progress bar ------------------------------

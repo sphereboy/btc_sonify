@@ -47,6 +47,11 @@ class Palette:
     doesn't need bass, but voice (a sustained 'lead' choir line floating
     above the synth arp) is what most modern palettes are missing
     when they feel "instrumental but no lead vocal".
+
+    ``rubato_default`` controls whether within-movement tempo breathing
+    is on by default for this palette. Romantic / orchestral palettes
+    (classical, cinematic) want rubato; grid-locked genres (synthwave,
+    electronic) don't — but the CLI flag overrides either way.
     """
     name: str
     melody_program: int
@@ -54,6 +59,7 @@ class Palette:
     drum_program: int = DRUM_KIT_STANDARD
     bass_program: int | None = None
     voice_program: int | None = None
+    rubato_default: bool = True
 
 
 # The four palettes. Program numbers are GM/GS standard and pick out
@@ -76,6 +82,7 @@ PALETTES: dict[str, Palette] = {
         drum_program=DRUM_KIT_ELECTRONIC,
         bass_program=38,     # Synth Bass 1 — punchy mono bass
         voice_program=53,    # Voice Oohs — synthy choir, 80s vibe
+        rubato_default=False,  # genre wants grid-locked tempo
     ),
     "cinematic": Palette(
         name="cinematic",
@@ -92,6 +99,7 @@ PALETTES: dict[str, Palette] = {
         drum_program=DRUM_KIT_TR_808,
         bass_program=38,     # Synth Bass 1
         voice_program=54,    # Synth Voice — chopped electronic vocal
+        rubato_default=False,  # genre wants grid-locked tempo
     ),
 }
 
@@ -178,6 +186,27 @@ class RunConfig:
     voice_note_length_candles: int = 4   # one held note covers N candles
     voice_octave_shift: int = 1          # +1 octave above melody (cap MIDI 96)
 
+    # Rubato (within-movement tempo breathing).
+    #
+    # In real performance a pianist *takes time* into climaxes, *holds* at
+    # turning points, and *pushes through* trending passages. Symphony
+    # mode currently emits one tempo per movement (a step function across
+    # months). Rubato adds a smoothed tempo curve within each movement so
+    # the piece breathes — rallentando into swing pivots and vol regime
+    # shifts, accelerando through trends, suspension at the climax.
+    #
+    # Implementation note: rubato modulates *real-time playback speed*
+    # via meta-track set_tempo events. It does NOT change per-candle tick
+    # counts — the audit invariant (1 candle = config.candle_ticks ticks)
+    # is fully preserved. Same OHLCV + same config still produces a
+    # byte-identical MIDI.
+    rubato: bool = True
+    rubato_min_factor: float = 0.65        # slowest = 65% of movement BPM
+    rubato_max_factor: float = 1.20        # fastest = 120% of movement BPM
+    rubato_smoothing_window: int = 5       # rolling-mean window over the per-candle factor
+    rubato_approach_window: int = 6        # candles of rallentando lead-in to a structural event
+    rubato_quantize_step: int = 4          # BPM bucket size — keeps the meta track readable
+
     @property
     def candle_ticks(self) -> int:
         """Number of MIDI ticks one candle occupies, per note_value."""
@@ -199,7 +228,10 @@ class RunConfig:
 
     def with_palette(self, palette: Palette) -> RunConfig:
         """Return a copy of this config with all five channel programs
-        set from the palette."""
+        set from the palette, plus rubato switched to the palette's
+        default. Use ``with_palette(...).with_rubato(True/False)`` if the
+        user supplied an explicit override on the CLI.
+        """
         return replace(
             self,
             melody_program=palette.melody_program,
@@ -207,4 +239,11 @@ class RunConfig:
             drum_program=palette.drum_program,
             bass_program=palette.bass_program,
             voice_program=palette.voice_program,
+            rubato=palette.rubato_default,
         )
+
+    def with_rubato(self, enabled: bool) -> RunConfig:
+        """Return a copy with rubato explicitly toggled. Used by the CLI
+        when the user passes ``--rubato`` / ``--no-rubato`` to override
+        the palette default."""
+        return replace(self, rubato=enabled)
