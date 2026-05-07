@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from btc_sonify.config import RunConfig
+from btc_sonify.detection import StructuralEvent, detect_structural_events
 from btc_sonify.mapping import MidiEvent, map_candles_to_events
 from btc_sonify.scales import note_name_to_midi
 
@@ -356,6 +357,45 @@ def map_symphony(
     return all_events, tempo_markers, rendered
 
 
+def compute_structural_markers(
+    df: pd.DataFrame,
+    rendered_movements: list[RenderedMovement],
+    base_config: RunConfig,
+) -> list[tuple[int, str]]:
+    """Translate detected structural events into ``(tick, label)`` pairs.
+
+    Each event from :func:`detect_structural_events` (run on the *whole*
+    DataFrame so labels reflect the global narrative) is placed at the
+    candle's absolute tick position inside its containing movement. When
+    movement boundaries share a candle, the event is anchored to the
+    *first* movement that contains it — matching the de-dup convention
+    in ``timeline.compute_timeline``.
+
+    Returns plain tuples to keep the symphony module independent of
+    midi_writer's ``StructuralMarker`` type. The CLI wraps them into
+    StructuralMarker before passing to ``write_midi``.
+    """
+    if not rendered_movements:
+        return []
+
+    events = detect_structural_events(df)
+    if not events:
+        return []
+
+    candle_ticks = base_config.candle_ticks
+    grace_ticks = base_config.grace_ticks
+
+    out: list[tuple[int, str]] = []
+    for event in events:
+        for r in rendered_movements:
+            if r.movement.start_idx <= event.candle_index <= r.movement.end_idx:
+                local_idx = event.candle_index - r.movement.start_idx
+                tick = r.tick_offset + grace_ticks + local_idx * candle_ticks
+                out.append((tick, event.label))
+                break  # anchor to the first containing movement
+    return out
+
+
 __all__ = [
     "Direction",
     "Movement",
@@ -365,4 +405,5 @@ __all__ = [
     "detect_movements",
     "derive_movement_config",
     "map_symphony",
+    "compute_structural_markers",
 ]

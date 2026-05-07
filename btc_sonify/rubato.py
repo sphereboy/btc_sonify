@@ -40,83 +40,20 @@ import numpy as np
 import pandas as pd
 
 from btc_sonify.config import RunConfig
+from btc_sonify.detection import (
+    ema_crossovers as _ema_crossovers,
+    local_pivots as _local_pivots,
+    rolling_std as _rolling_std,
+    structural_event_mask as _structural_events,
+    vol_regime_shifts as _vol_regime_shifts,
+)
 from btc_sonify.symphony import Movement, TempoMarker
 
 
-# --- Signal detection ---------------------------------------------------
-
-def _local_pivots(closes: np.ndarray, window: int = 5) -> np.ndarray:
-    """Boolean mask: True at indices that are a local maximum or minimum
-    within ±``window`` candles AND show actual price variation in the
-    window. The strict-variation guard prevents flat segments from
-    flagging every candle as a pivot.
-    """
-    n = len(closes)
-    mask = np.zeros(n, dtype=bool)
-    if n < 2 * window + 1:
-        return mask
-    for i in range(window, n - window):
-        local = closes[i - window: i + window + 1]
-        if local.max() == local.min():
-            continue
-        if closes[i] == local.max() or closes[i] == local.min():
-            mask[i] = True
-    return mask
-
-
-def _rolling_std(values: np.ndarray, window: int) -> np.ndarray:
-    """Trailing rolling standard deviation. Output length matches input;
-    the first ``window-1`` entries are computed from whatever data is
-    available so far so short series still get a usable curve."""
-    n = len(values)
-    out = np.zeros(n, dtype=float)
-    for i in range(n):
-        start = max(0, i - window + 1)
-        out[i] = float(np.std(values[start: i + 1]))
-    return out
-
-
-def _vol_regime_shifts(
-    returns: np.ndarray, short: int = 20, long: int = 100
-) -> np.ndarray:
-    """Boolean mask of vol-regime-shift candles: short-window stdev
-    crosses above 1.5× or below 0.5× of long-window trailing mean."""
-    n = len(returns)
-    if n < short + 1:
-        return np.zeros(n, dtype=bool)
-    short_vol = _rolling_std(returns, short)
-    long_mean = np.zeros(n, dtype=float)
-    for i in range(n):
-        start = max(0, i - long + 1)
-        long_mean[i] = float(np.mean(short_vol[start: i + 1]))
-    ratio = np.where(long_mean > 0, short_vol / np.maximum(long_mean, 1e-12), 1.0)
-    shifts = np.zeros(n, dtype=bool)
-    for i in range(1, n):
-        was_normal = 0.5 <= ratio[i - 1] <= 1.5
-        is_extreme = ratio[i] > 1.5 or ratio[i] < 0.5
-        if was_normal and is_extreme:
-            shifts[i] = True
-    return shifts
-
-
-def _ema_crossovers(closes: np.ndarray, fast: int = 20, slow: int = 50) -> np.ndarray:
-    """Boolean mask of EMA-crossover candles (fast EMA crosses slow)."""
-    n = len(closes)
-    if n < slow:
-        return np.zeros(n, dtype=bool)
-    ema_fast = pd.Series(closes).ewm(span=fast, adjust=False).mean().to_numpy()
-    ema_slow = pd.Series(closes).ewm(span=slow, adjust=False).mean().to_numpy()
-    sign = np.sign(ema_fast - ema_slow)
-    cross = np.zeros(n, dtype=bool)
-    for i in range(1, n):
-        if sign[i] != sign[i - 1] and sign[i] != 0 and sign[i - 1] != 0:
-            cross[i] = True
-    return cross
-
-
-def _structural_events(closes: np.ndarray, returns: np.ndarray) -> np.ndarray:
-    """Union of the three structural-event detectors."""
-    return _local_pivots(closes) | _vol_regime_shifts(returns) | _ema_crossovers(closes)
+# Re-exported with the historical underscore names so the curve code
+# below reads exactly like the original module. Detection now lives in
+# btc_sonify.detection so rubato and the marker writer agree on what
+# counts as a structural event.
 
 
 # --- Curve computation --------------------------------------------------

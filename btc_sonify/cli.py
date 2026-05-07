@@ -29,10 +29,20 @@ from btc_sonify.bass import map_bass
 from btc_sonify.config import PALETTES, RunConfig
 from btc_sonify.data import DEFAULT_EXCHANGE, DEFAULT_SYMBOL, fetch_ohlcv
 from btc_sonify.mapping import map_candles_to_events
-from btc_sonify.midi_writer import TempoChange, write_midi
+from btc_sonify.midi_writer import (
+    StructuralMarker,
+    TempoChange,
+    write_midi,
+    write_midi_stems,
+)
 from btc_sonify.percussion import MovementOffset, map_percussion
 from btc_sonify.scales import SCALES
-from btc_sonify.symphony import detect_movements, map_symphony
+from btc_sonify.sidecar import build_sidecar, write_sidecar
+from btc_sonify.symphony import (
+    compute_structural_markers,
+    detect_movements,
+    map_symphony,
+)
 from btc_sonify.visualize import write_visualization
 from btc_sonify.voice import map_voice
 
@@ -99,6 +109,16 @@ def sonify(
         "--visualize",
         is_flag=True,
         help="Also write an interactive HTML visualizer next to the .mid.",
+    ),
+    export_stems: bool = typer.Option(
+        False,
+        "--export-stems",
+        is_flag=True,
+        help=(
+            "Also write one .mid per channel (melody/harmony/bass/voice/"
+            "percussion) so each track can be routed to its own instrument "
+            "in a DAW without manual splitting."
+        ),
     ),
     audio_file: str | None = typer.Option(
         None,
@@ -171,8 +191,8 @@ def sonify(
 
     # --- Map to MIDI events ------------------------------------------
     if mode == "symphony":
-        (events, tempo_changes, percussion_events, bass_events, voice_events,
-         rendered_movements) = _map_symphony_pipeline(
+        (events, tempo_changes, structural_markers, percussion_events,
+         bass_events, voice_events, rendered_movements) = _map_symphony_pipeline(
             console, df, base_config,
             forced_movements=movements,
             user_specified_scale=user_specified_scale,
@@ -185,6 +205,7 @@ def sonify(
         bass_events = map_bass(df, base_config)
         voice_events = map_voice(df, base_config)
         tempo_changes = None
+        structural_markers = None
         percussion_events = []
         rendered_movements = None
         title = None
@@ -205,11 +226,40 @@ def sonify(
     write_midi(
         all_events, output_path, base_config,
         tempo_changes=tempo_changes,
+        markers=structural_markers,
         include_percussion=include_percussion,
         include_bass=include_bass,
         include_voice=include_voice,
         title=title,
     )
+
+    # --- Optional stems ----------------------------------------------
+    stem_paths: list[Path] = []
+    if export_stems:
+        console.print(f"[cyan]Writing per-channel stems next to {output_path.name}…[/cyan]")
+        stem_paths = write_midi_stems(
+            all_events, output_path, base_config,
+            tempo_changes=tempo_changes,
+            markers=structural_markers,
+            title=title,
+        )
+
+    # --- Sidecar JSON (always) ---------------------------------------
+    sidecar_path = output_path.with_suffix(".json")
+    console.print(f"[cyan]Writing sidecar → {sidecar_path}…[/cyan]")
+    sidecar = build_sidecar(
+        df=df,
+        base_config=base_config,
+        rendered_movements=rendered_movements,
+        symbol=symbol,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        exchange=exchange,
+        palette=palette,
+        mode=mode,
+    )
+    write_sidecar(sidecar, sidecar_path)
 
     # --- Optional HTML visualizer ------------------------------------
     html_path: Path | None = None
@@ -270,6 +320,9 @@ def sonify(
     table.add_row("pitch range",   f"MIDI {pitch_range[0]}..{pitch_range[1]}")
     table.add_row("duration",      f"{seconds:.1f}s")
     table.add_row("output",        str(output_path))
+    table.add_row("sidecar",       str(sidecar_path))
+    if stem_paths:
+        table.add_row("stems",       f"{len(stem_paths)} files")
     if wav_path is not None:
         table.add_row("wav",       str(wav_path))
     if html_path is not None:
@@ -322,6 +375,10 @@ def _map_symphony_pipeline(
     tempo_changes = [
         TempoChange(tick=t.tick, bpm=t.bpm, label=t.label) for t in tempo_markers
     ]
+    structural_markers = [
+        StructuralMarker(tick=t, label=label)
+        for t, label in compute_structural_markers(df, rendered, base_config)
+    ]
 
     # Per-movement offsets carry the per-movement RunConfig so bass can
     # quantize against each movement's scale/root.
@@ -339,7 +396,8 @@ def _map_symphony_pipeline(
     voice_events = map_voice(df, base_config, movement_offsets=offsets)
 
     return (
-        events, tempo_changes, percussion_events, bass_events, voice_events, rendered,
+        events, tempo_changes, structural_markers,
+        percussion_events, bass_events, voice_events, rendered,
     )
 
 
