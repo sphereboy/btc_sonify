@@ -39,5 +39,4 @@ htmlcov/
 .idea/
 
 # Local agent context (not for public repo)
-CLAUDE.md
 .claude/
