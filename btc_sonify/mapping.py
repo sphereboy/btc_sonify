@@ -172,6 +172,54 @@ def _harmony_notes(
     return [close_note, third, fifth]
 
 
+# --- Harmony rhythm: arpeggio position tables --------------------------
+#
+# When ``config.harmony_rhythm`` is "arp_up" or "arp_down" the chord is
+# laid out across 4 fixed sub-positions per candle instead of being held
+# as a single sustained voicing. Subdivisions count (4) and the per-
+# position velocity contour are NOT exposed as config — grid stability
+# across tier transitions is load-bearing for downstream consumers.
+#
+# Position → chord-index table, indexed by [tier][position]. The chord
+# from ``_harmony_notes`` has length 1 (single), 2 (diad: root,fifth),
+# or 3 (triad: root,third,fifth). Triad position 3 returns to the inner
+# voice (third) so register stays stable when range crosses a tercile
+# boundary on consecutive candles.
+_ARP_UP_INDEX: tuple[tuple[int, ...], ...] = (
+    (0, 0, 0, 0),  # tier 0: single note repeated
+    (0, 1, 0, 1),  # tier 1: root, fifth, root, fifth
+    (0, 1, 2, 1),  # tier 2: root, third, fifth, third
+)
+_ARP_DOWN_INDEX: tuple[tuple[int, ...], ...] = (
+    (0, 0, 0, 0),  # tier 0: single note repeated
+    (1, 0, 1, 0),  # tier 1: fifth, root, fifth, root
+    (2, 1, 0, 1),  # tier 2: fifth, third, root, third
+)
+
+# Velocity contour applied per arp position (added between
+# harmony_velocity_factor and humanize jitter). Position 0 lands square
+# on the candle downbeat — keep it forward; positions 1-3 are weak
+# beats, slightly tucked.
+_ARP_VELOCITY_OFFSETS: tuple[int, ...] = (0, -6, -3, -8)
+
+# Subdivisions per candle for arpeggiation. Fixed in code on purpose —
+# 4 is a stable division of every supported note_value's tick count
+# (480/240/960 all divide cleanly by 4 at ppq=480).
+_ARP_SUBDIVISIONS: int = 4
+
+
+def _arp_positions(chord: list[int], range_tier: int, direction: str) -> list[int]:
+    """Return the 4 chord notes to play across the candle slot for the
+    given arp direction. ``direction`` is "up" or "down"."""
+    table = _ARP_UP_INDEX if direction == "up" else _ARP_DOWN_INDEX
+    indices = table[range_tier]
+    # Chord may be shorter than the index it points at (e.g. tier 2
+    # always indexes 0/1/2 but the chord could in principle be a diad
+    # if a future feature fed mismatched inputs). Defensive clamp.
+    n = len(chord)
+    return [chord[min(idx, n - 1)] for idx in indices]
+
+
 # --- Within-candle phrase ----------------------------------------------
 
 def _melody_phrase(feat: dict, range_median: float, modest_factor: float) -> list[float]:
@@ -394,22 +442,62 @@ def map_candles_to_events(
                 ))
 
         # --- Harmony track: chord on the second channel -------------
-        chord = _harmony_notes(close_note, int(tiers[i]), scale_notes)
+        tier = int(tiers[i])
+        chord = _harmony_notes(close_note, tier, scale_notes)
         h_vel_base = max(
             config.velocity_min,
             min(config.velocity_max,
                 int(round(melody_velocity_for_harmony * config.harmony_velocity_factor))),
         )
-        for j, note in enumerate(chord):
-            # Salt with +100 so harmony jitters independently of melody.
-            v = _humanize_velocity(h_vel_base, i, j + 100, config)
-            events.append(MidiEvent(
-                channel=config.harmony_channel,
-                note=note,
-                velocity=v,
-                start_tick=candle_start,
-                duration_ticks=candle_ticks,
-            ))
+
+        if config.harmony_rhythm == "sustained":
+            # v1 behaviour: one held note per chord pitch covering the
+            # full candle slot. Salt with +100 so harmony jitters
+            # independently of melody.
+            for j, note in enumerate(chord):
+                v = _humanize_velocity(h_vel_base, i, j + 100, config)
+                events.append(MidiEvent(
+                    channel=config.harmony_channel,
+                    note=note,
+                    velocity=v,
+                    start_tick=candle_start,
+                    duration_ticks=candle_ticks,
+                ))
+        else:
+            # Arpeggiated harmony: 4 positions per candle. Direction
+            # ("up" / "down") is encoded by the rhythm name. Sub-tick
+            # math: integer division gives equal-length positions; any
+            # remainder is absorbed into the last position so the
+            # combined arp duration equals candle_ticks exactly
+            # (matching sustained's bar geometry). Velocity contour is
+            # applied AFTER harmony_velocity_factor and BEFORE humanize
+            # jitter; humanize uses a fresh salt (position + 200) that
+            # is distinct from melody (idx) and sustained-harmony
+            # (j + 100) so the three streams jitter independently.
+            direction = "up" if config.harmony_rhythm == "arp_up" else "down"
+            arp_notes = _arp_positions(chord, tier, direction)
+            sub = candle_ticks // _ARP_SUBDIVISIONS
+            for k, note in enumerate(arp_notes):
+                vel_offset = _ARP_VELOCITY_OFFSETS[k]
+                base = max(
+                    config.velocity_min,
+                    min(config.velocity_max, h_vel_base + vel_offset),
+                )
+                v = _humanize_velocity(base, i, k + 200, config)
+                start = candle_start + k * sub
+                # Last position absorbs the integer-division remainder
+                # so the harmony bar is exactly candle_ticks long.
+                if k == _ARP_SUBDIVISIONS - 1:
+                    duration = candle_ticks - k * sub
+                else:
+                    duration = sub
+                events.append(MidiEvent(
+                    channel=config.harmony_channel,
+                    note=note,
+                    velocity=v,
+                    start_tick=start,
+                    duration_ticks=duration,
+                ))
 
     return events
 
@@ -423,6 +511,7 @@ __all__ = [
     "_candle_features",
     "_articulation_fraction",
     "_harmony_notes",
+    "_arp_positions",
     "_range_tiers",
     "_melody_phrase",
     "_stable_jitter",

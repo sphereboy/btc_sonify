@@ -36,14 +36,11 @@ from btc_sonify.config import (
 )
 from btc_sonify.mapping import MidiEvent
 
-# Velocity scaling: drums at this fraction of the melody's max velocity.
-DRUM_VELOCITY_FACTOR = 0.5
-HI_HAT_VELOCITY_FACTOR = 0.30   # the heartbeat sits underneath
-CRASH_VELOCITY_FACTOR = 0.65    # a touch louder for transitions
-
-# Percentile thresholds for kick / snare triggers.
-VOLUME_DECILE = 0.90
-RANGE_DECILE = 0.90
+# Velocity factors and percentile thresholds previously lived here as
+# module constants; they now live on RunConfig so palettes can tune drum
+# density and mix balance per genre. See config.py:
+#   drum_volume_decile, drum_range_decile,
+#   drum_velocity_factor, hi_hat_velocity_factor, crash_velocity_factor
 
 
 @dataclass(frozen=True)
@@ -96,24 +93,28 @@ def map_percussion(
 
     # Use full-series percentiles so the meaning of "big volume" or
     # "big range" stays consistent across the piece.
-    vol_threshold = float(np.quantile(volumes, VOLUME_DECILE)) if len(volumes) else 0.0
-    range_threshold = float(np.quantile(ranges, RANGE_DECILE)) if len(ranges) else 0.0
+    vol_threshold = (
+        float(np.quantile(volumes, config.drum_volume_decile)) if len(volumes) else 0.0
+    )
+    range_threshold = (
+        float(np.quantile(ranges, config.drum_range_decile)) if len(ranges) else 0.0
+    )
 
-    kick_v = _scaled_velocity(config, DRUM_VELOCITY_FACTOR)
-    snare_v = _scaled_velocity(config, DRUM_VELOCITY_FACTOR)
-    hat_v = _scaled_velocity(config, HI_HAT_VELOCITY_FACTOR)
-    ride_v = _scaled_velocity(config, DRUM_VELOCITY_FACTOR)
-    crash_v = _scaled_velocity(config, CRASH_VELOCITY_FACTOR)
+    kick_v = _scaled_velocity(config, config.drum_velocity_factor)
+    snare_v = _scaled_velocity(config, config.drum_velocity_factor)
+    hat_v = _scaled_velocity(config, config.hi_hat_velocity_factor)
+    ride_v = _scaled_velocity(config, config.drum_velocity_factor)
+    crash_v = _scaled_velocity(config, config.crash_velocity_factor)
 
     # Build a fast lookup: index -> (tick_offset, is_movement_start).
     # If no movements were given, treat the whole thing as one movement.
+    # Single-movement mode emits no crash anywhere (no transition into
+    # candle 0). Replaces an earlier two-step pattern that set
+    # ``i == 0`` then unconditionally rewrote the flag to False.
     if movement_offsets is None:
         offset_for: dict[int, tuple[int, bool]] = {
-            i: (pad, i == 0) for i in range(len(df))
+            i: (pad, False) for i in range(len(df))
         }
-        # In single-movement mode, no crash on candle 0 (no transition).
-        for i in offset_for:
-            offset_for[i] = (offset_for[i][0], False)
     else:
         offset_for = {}
         for k, m in enumerate(movement_offsets):

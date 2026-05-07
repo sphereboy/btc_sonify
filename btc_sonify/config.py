@@ -12,6 +12,7 @@ constants because CLAUDE.md explicitly asks for each axis to be tunable.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Literal
 
 # General MIDI program numbers used as defaults — Acoustic Grand for
 # melody and String Ensemble 1 for harmony, per CLAUDE.md.
@@ -61,6 +62,56 @@ class Palette:
     voice_program: int | None = None
     rubato_default: bool = True
 
+    # Genre-specific RunConfig overrides — None = use RunConfig default.
+    # Each palette is a coherent style statement: not just instrument
+    # programs, but humanization, dynamic range, articulation, drum
+    # density, rubato intensity, and harmony rhythm. These are typed
+    # explicitly (no dict[str, Any]) so a typo on a Palette field fails
+    # loudly at construction via dataclasses.replace() validation.
+    humanize: bool | None = None
+    velocity_min: int | None = None
+    velocity_max: int | None = None
+    velocity_jitter_range: int | None = None
+    timing_jitter_ticks: int | None = None
+    legato_fraction: float | None = None
+    normal_fraction: float | None = None
+    marcato_fraction: float | None = None
+    staccato_fraction: float | None = None
+    marcato_velocity_bonus: int | None = None
+    rubato_min_factor: float | None = None
+    rubato_max_factor: float | None = None
+    drum_volume_decile: float | None = None
+    drum_range_decile: float | None = None
+    drum_velocity_factor: float | None = None
+    hi_hat_velocity_factor: float | None = None
+    crash_velocity_factor: float | None = None
+    harmony_rhythm: Literal["sustained", "arp_up", "arp_down"] | None = None
+
+
+# Tuple of RunConfig field names that Palette is allowed to override.
+# replace() validates field names so a typo on a Palette field fails
+# loudly during palette construction rather than silently no-op'ing.
+OVERRIDABLE: tuple[str, ...] = (
+    "humanize",
+    "velocity_min",
+    "velocity_max",
+    "velocity_jitter_range",
+    "timing_jitter_ticks",
+    "legato_fraction",
+    "normal_fraction",
+    "marcato_fraction",
+    "staccato_fraction",
+    "marcato_velocity_bonus",
+    "rubato_min_factor",
+    "rubato_max_factor",
+    "drum_volume_decile",
+    "drum_range_decile",
+    "drum_velocity_factor",
+    "hi_hat_velocity_factor",
+    "crash_velocity_factor",
+    "harmony_rhythm",
+)
+
 
 # The four palettes. Program numbers are GM/GS standard and pick out
 # instruments that hold up across most synths; on Logic / pro DAWs they
@@ -83,6 +134,9 @@ PALETTES: dict[str, Palette] = {
         bass_program=38,     # Synth Bass 1 — punchy mono bass
         voice_program=53,    # Voice Oohs — synthy choir, 80s vibe
         rubato_default=False,  # genre wants grid-locked tempo
+        # Synthwave: pad arpeggiates upward — chord becomes sequenced
+        # motion instead of a held wash. The genre lives on arpeggios.
+        harmony_rhythm="arp_up",
     ),
     "cinematic": Palette(
         name="cinematic",
@@ -91,6 +145,29 @@ PALETTES: dict[str, Palette] = {
         drum_program=DRUM_KIT_POWER,
         bass_program=39,     # Synth Bass 2 — fat sub
         voice_program=91,    # Pad 4 (choir) — film score choir pad
+        # Cinematic — film-score performance character.
+        # Wide dynamic range, audible performer wobble, dramatic rubato,
+        # tight kit. velocity_min=28 deliberately breaks CLAUDE.md's
+        # global velocity_min=40 floor (owner-approved) so quiet
+        # passages can drop to true pianissimo before swelling.
+        humanize=True,
+        velocity_min=28,
+        velocity_max=122,
+        velocity_jitter_range=10,
+        timing_jitter_ticks=5,
+        legato_fraction=1.02,
+        normal_fraction=0.88,
+        marcato_fraction=0.55,
+        staccato_fraction=0.32,
+        marcato_velocity_bonus=8,
+        rubato_min_factor=0.55,
+        rubato_max_factor=1.15,
+        drum_volume_decile=0.94,
+        drum_range_decile=0.92,
+        drum_velocity_factor=0.55,
+        hi_hat_velocity_factor=0.18,
+        crash_velocity_factor=0.55,
+        harmony_rhythm="sustained",  # film score, not arp
     ),
     "electronic": Palette(
         name="electronic",
@@ -100,6 +177,9 @@ PALETTES: dict[str, Palette] = {
         bass_program=38,     # Synth Bass 1
         voice_program=54,    # Synth Voice — chopped electronic vocal
         rubato_default=False,  # genre wants grid-locked tempo
+        # Electronic: pad arpeggiates downward — descending sequence,
+        # complementary motion to synthwave's upward arp.
+        harmony_rhythm="arp_down",
     ),
 }
 
@@ -177,6 +257,25 @@ class RunConfig:
     bass_velocity_factor: float = 0.7
     bass_octave_shift: int = -1          # one octave below the melody close note
 
+    # Harmony rhythm — how the chord is laid out in time per candle.
+    #   "sustained": one note per chord pitch covering the full candle slot
+    #                (the v1 / film-score behaviour).
+    #   "arp_up":    chord arpeggiated upward in 4 fixed positions per candle.
+    #   "arp_down":  chord arpeggiated downward in 4 fixed positions per candle.
+    # Subdivision count (4) and per-position velocity contour are fixed in
+    # mapping.py — promoting them to config would let users break the
+    # grid-stable bar geometry that downstream consumers rely on.
+    harmony_rhythm: Literal["sustained", "arp_up", "arp_down"] = "sustained"
+
+    # Percussion thresholds and velocity factors. Lifted out of
+    # percussion.py so palettes can tune drum density / mix balance per
+    # genre. Defaults preserve the pre-lift behaviour exactly.
+    drum_volume_decile: float = 0.90      # candles above this volume quantile fire a kick
+    drum_range_decile: float = 0.90       # candles above this range quantile fire a snare
+    drum_velocity_factor: float = 0.50    # kick/snare/ride at this fraction of velocity_max
+    hi_hat_velocity_factor: float = 0.30  # hi-hat (the heartbeat) sits underneath
+    crash_velocity_factor: float = 0.65   # crash slightly louder for movement transitions
+
     # Voice (the lead "vocal" line floating above the synth arp).
     # Plays a sustained note every voice_note_length_candles candles,
     # pitched at a smoothed close price quantized to scale and shifted
@@ -228,10 +327,28 @@ class RunConfig:
 
     def with_palette(self, palette: Palette) -> RunConfig:
         """Return a copy of this config with all five channel programs
-        set from the palette, plus rubato switched to the palette's
-        default. Use ``with_palette(...).with_rubato(True/False)`` if the
-        user supplied an explicit override on the CLI.
+        set from the palette, rubato switched to the palette's default,
+        and any non-None palette overrides applied to the matching
+        RunConfig fields.
+
+        The palette is the genre statement: it decides not just which
+        instruments play but *how* they play — humanization, dynamic
+        range, articulation gates, drum density, rubato breadth, and
+        harmony rhythm. Knobs the palette doesn't pin keep their
+        RunConfig defaults, so a partially-tuned palette is fine.
+
+        ``replace()`` validates field names at runtime, so a typo on a
+        Palette override field surfaces here as a clear TypeError rather
+        than silently no-op'ing.
+
+        Use ``with_palette(...).with_rubato(True/False)`` if the user
+        supplied an explicit ``--rubato`` / ``--no-rubato`` on the CLI.
         """
+        overrides = {
+            field: getattr(palette, field)
+            for field in OVERRIDABLE
+            if getattr(palette, field) is not None
+        }
         return replace(
             self,
             melody_program=palette.melody_program,
@@ -240,6 +357,7 @@ class RunConfig:
             bass_program=palette.bass_program,
             voice_program=palette.voice_program,
             rubato=palette.rubato_default,
+            **overrides,
         )
 
     def with_rubato(self, enabled: bool) -> RunConfig:

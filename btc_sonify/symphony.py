@@ -239,6 +239,18 @@ def derive_movement_config(
     Direction picks the scale (only when the user hasn't pinned one);
     root modulates by a perfect fifth from the previous movement;
     high-volatility movements get a 20% tempo bump.
+
+    **Contract — fields this function may modify.** Only ``scale``,
+    ``root``, and ``bpm``. Every other field on ``base`` (humanize,
+    velocity_min/max, jitter ranges, articulation fractions, rubato
+    bounds, drum thresholds, harmony_rhythm, all channel programs) was
+    set by ``RunConfig.with_palette()`` upstream and represents the
+    palette's genre statement. Modifying any of those here would
+    silently override the palette — e.g. adding ``humanize=True`` would
+    break the electronic palette's grid-locked promise. If a future
+    feature needs per-movement variation of a palette field, route it
+    through a separate, explicitly-named function rather than expanding
+    this one.
     """
     if user_specified_scale:
         scale = base.scale

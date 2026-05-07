@@ -167,3 +167,46 @@ def test_percussion_is_deterministic(cfg, fixture_df):
     a = map_percussion(fixture_df, cfg)
     b = map_percussion(fixture_df.copy(), cfg)
     assert a == b
+
+
+# --- Lifted-config regression ------------------------------------------
+
+def test_lower_drum_volume_decile_fires_more_kicks(fixture_df):
+    """The 5 percussion knobs were lifted from module constants into
+    RunConfig so palettes can tune drum density. Smoke-test the lift:
+    lowering ``drum_volume_decile`` from the default 0.90 to 0.50 must
+    fire strictly more kicks (more candles cross the lower threshold).
+    """
+    from dataclasses import replace as _replace
+
+    default = RunConfig()
+    loose = _replace(default, drum_volume_decile=0.50)
+
+    default_kicks = [
+        e for e in map_percussion(fixture_df, default) if e.note == DRUM_KICK
+    ]
+    loose_kicks = [
+        e for e in map_percussion(fixture_df, loose) if e.note == DRUM_KICK
+    ]
+    assert len(loose_kicks) > len(default_kicks), (
+        f"Expected more kicks with lower volume decile; "
+        f"got default={len(default_kicks)}, loose={len(loose_kicks)}"
+    )
+
+
+def test_drum_velocity_factor_scales_kick_velocity(fixture_df):
+    """Lifting drum_velocity_factor onto config means a palette can
+    push drums forward in the mix. Verify: doubling the factor raises
+    kick velocity."""
+    from dataclasses import replace as _replace
+
+    quiet = _replace(RunConfig(), drum_velocity_factor=0.30)
+    loud = _replace(RunConfig(), drum_velocity_factor=0.80)
+    quiet_kicks = [
+        e.velocity for e in map_percussion(fixture_df, quiet) if e.note == DRUM_KICK
+    ]
+    loud_kicks = [
+        e.velocity for e in map_percussion(fixture_df, loud) if e.note == DRUM_KICK
+    ]
+    if quiet_kicks and loud_kicks:
+        assert max(loud_kicks) > max(quiet_kicks)
